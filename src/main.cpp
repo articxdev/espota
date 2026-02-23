@@ -90,9 +90,9 @@ void loop() {
     
     // Blink LED to show device is alive
     digitalWrite(23, HIGH);
-    delay(5000);
+    delay(100);
     digitalWrite(23, LOW);
-    delay(300);
+    delay(100);
 }
 
 // ============================================================
@@ -247,29 +247,57 @@ void performOTAUpdate(String firmwareUrl, String expectedSha256) {
     Serial.println("[*] Starting OTA update process...");
     
     HTTPClient http;
-    http.setConnectTimeout(30000);  // 30 second timeout
+    http.setConnectTimeout(30000);
     http.setTimeout(30000);
     
-    // IMPORTANT: Enable following HTTP redirects (GitHub returns 302)
-    http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-    
-    if (!http.begin(firmwareUrl)) {
-        Serial.println("[!] Failed to connect to firmware URL");
-        http.end();
-        return;
-    }
-    
-    int httpCode = http.GET();
-    
-    Serial.print("[*] HTTP Response Code: ");
-    Serial.println(httpCode);
-    
-    // Accept 200 (success) or 206 (partial content)
-    if (httpCode != HTTP_CODE_OK && httpCode != HTTP_CODE_MOVED_PERMANENTLY) {
-        Serial.print("[!] Failed to download firmware. HTTP Code: ");
+    // Try up to 3 redirects
+    for (int redirectCount = 0; redirectCount < 3; redirectCount++) {
+        Serial.print("[*] Attempt ");
+        Serial.print(redirectCount + 1);
+        Serial.print(": Connecting to ");
+        Serial.println(firmwareUrl);
+        
+        if (!http.begin(firmwareUrl)) {
+            Serial.println("[!] Failed to connect to firmware URL");
+            http.end();
+            return;
+        }
+        
+        http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+        int httpCode = http.GET();
+        
+        Serial.print("[*] HTTP Response Code: ");
         Serial.println(httpCode);
-        http.end();
-        return;
+        
+        // Handle redirects manually (302, 301, 307)
+        if (httpCode == 301 || httpCode == 302 || httpCode == 307) {
+            String location = http.header("Location");
+            http.end();
+            
+            if (location.length() > 0) {
+                Serial.print("[*] Redirected to: ");
+                Serial.println(location);
+                firmwareUrl = location;
+                continue;
+            }
+        }
+        
+        // Success - proceed with download
+        if (httpCode == HTTP_CODE_OK || httpCode == 200) {
+            break;
+        }
+        
+        // Other error
+        if (redirectCount < 2) {
+            Serial.println("[!] Retrying...");
+            http.end();
+            delay(2000);
+        } else {
+            Serial.print("[!] Failed after retries. HTTP Code: ");
+            Serial.println(httpCode);
+            http.end();
+            return;
+        }
     }
     
     int contentLength = http.getSize();
@@ -350,7 +378,7 @@ void performOTAUpdate(String firmwareUrl, String expectedSha256) {
         if (Update.isFinished()) {
             Serial.println("[OK] OTA Update writing finished successfully!");
             Serial.println("[*] Restarting device in 3 seconds...");
-            blinkLED(5, 100);  // 5 quick blinks before restart
+            blinkLED(5, 100);
             delay(3000);
             ESP.restart();
         } else {
