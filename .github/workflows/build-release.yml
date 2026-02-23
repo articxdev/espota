@@ -115,7 +115,7 @@ jobs:
           cat > version.json << EOF
           {
             "version": "${{ steps.version.outputs.version }}",
-            "download_url": "firmware.bin",
+            "download_url": "https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.version }}/firmware.bin",
             "sha256": "${{ steps.checksum.outputs.checksum }}",
             "release_notes": "Release v${{ steps.version.outputs.version }} - Automatic build",
             "min_version": "0.9.0",
@@ -142,6 +142,11 @@ jobs:
           # Copy version.json to docs folder for hosting
           mkdir -p docs
           cp version.json docs/version.json
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add version.json docs/version.json
+          git commit -m "Update version.json for v${{ steps.version.outputs.version }}" || true
+          git push origin main || true
           echo "Version info is available at: https://raw.githubusercontent.com/${{ github.repository }}/main/version.json"
       
       - name: Build summary
