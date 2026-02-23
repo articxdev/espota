@@ -58,10 +58,10 @@ void setup() {
 void loop() {
     // ===== CORE HARDWARE ALWAYS RUNS (WiFi INDEPENDENT) =====
     static unsigned long lastHardwareTick = 0;
-    if (millis() - lastHardwareTick > 500) {  // Tick every 500ms
+    if (millis() - lastHardwareTick > 1000) {  // Toggle every 1 second
         lastHardwareTick = millis();
         
-        // LED blink pattern: 250ms ON, 250ms OFF
+        // LED blink pattern: 1sec ON, 1sec OFF
         static bool ledState = false;
         ledState = !ledState;
         digitalWrite(23, ledState ? HIGH : LOW);
