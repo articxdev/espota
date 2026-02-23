@@ -1,3 +1,4 @@
+#ifndef CONFIG_H
 #define CONFIG_H
 
 // ============================================================
@@ -15,7 +16,7 @@
 // AP Settings for first-time setup (hidden SSID)
 #define AP_SSID "ESP32"          // Hidden WiFi hotspot SSID
 #define AP_PASSWORD "esp12345"   // AP password (min 8 chars)
-#define AP_HIDDEN true                   // Hide the setup hotspot
+#define AP_HIDDEN false                   // Hide the setup hotspot
 
 // WiFiManager settings
 #define WIFI_TIMEOUT 180                 // Timeout in seconds for WiFi setup
