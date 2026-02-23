@@ -90,7 +90,7 @@ void loop() {
     
     // Blink LED to show device is alive
     digitalWrite(23, HIGH);
-    delay(300);
+    delay(1000);
     digitalWrite(23, LOW);
     delay(300);
 }
