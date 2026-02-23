@@ -41,6 +41,13 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Firmware version: $VERSION"
       
+      - name: Auto-update config.h with version from version.txt
+        run: |
+          VERSION=$(cat version.txt | tr -d '\n')
+          sed -i "s/#define FIRMWARE_VERSION \".*\"/#define FIRMWARE_VERSION \"$VERSION\"/" include/config.h
+          echo "Updated config.h FIRMWARE_VERSION to: $VERSION"
+          grep "FIRMWARE_VERSION" include/config.h
+      
       - name: Build firmware
         run: |
           platformio run -e esp32
@@ -136,7 +143,7 @@ jobs:
           asset_name: version.json
           asset_content_type: application/json
       
-      - name: Publish version.json to GitHub Pages (optional)
+      - name: Publish version.json and sync config.h to GitHub Pages
         if: github.ref == 'refs/heads/main'
         run: |
           # Copy version.json to docs folder for hosting
@@ -144,8 +151,9 @@ jobs:
           cp version.json docs/version.json
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
-          git add version.json docs/version.json
-          git commit -m "Update version.json for v${{ steps.version.outputs.version }}" || true
+          # Commit updated config.h and version.json
+          git add include/config.h version.json docs/version.json
+          git commit -m "Auto-sync: Update version to v${{ steps.version.outputs.version }}" || true
           git push origin main || true
           echo "Version info is available at: https://raw.githubusercontent.com/${{ github.repository }}/main/version.json"
       

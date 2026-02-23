@@ -56,6 +56,22 @@ void setup() {
 // MAIN LOOP
 // ============================================================
 void loop() {
+    // ===== CORE HARDWARE ALWAYS RUNS (WiFi INDEPENDENT) =====
+    static unsigned long lastHardwareTick = 0;
+    if (millis() - lastHardwareTick > 500) {  // Tick every 500ms
+        lastHardwareTick = millis();
+        
+        // LED blink pattern: 250ms ON, 250ms OFF
+        static bool ledState = false;
+        ledState = !ledState;
+        digitalWrite(23, ledState ? HIGH : LOW);
+        
+        // Always show hardware is working
+        Serial.print("[CORE] LED ");
+        Serial.println(ledState ? "ON" : "OFF");
+    }
+    
+    // ===== WiFi & OTA FEATURES (Optional) =====
     // Handle WiFiManager background tasks
     wifiManager.process();
     
@@ -84,15 +100,9 @@ void loop() {
             Serial.println("\n[*] Checking for firmware updates...");
             checkForUpdates();
         } else if (!provisioningMode) {
-            Serial.println("[!] WiFi not connected - will reconnect automatically");
+            Serial.println("[!] WiFi not connected - hardware still running, OTA will retry");
         }
     }
-    
-    // Blink LED to show device is alive
-    digitalWrite(23, HIGH);
-    delay(100);
-    digitalWrite(23, LOW);
-    delay(100);
 }
 
 // ============================================================
