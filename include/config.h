@@ -6,7 +6,7 @@
 // ============================================================
 
 // Firmware Version
-#define FIRMWARE_VERSION "1.0.6"
+#define FIRMWARE_VERSION "1.0.7"
 #define FIRMWARE_AUTHOR "ESP32 Project"
 
 // ============================================================
@@ -40,7 +40,7 @@
                           GITHUB_OWNER "/" GITHUB_REPO "/releases/download"
 
 // OTA Check Interval
-#define OTA_CHECK_INTERVAL_SECONDS 3600  // Check for updates every hour
+#define OTA_CHECK_INTERVAL_SECONDS 60  // Check for updates every 60 seconds (for testing)
 
 // HTTPS verification (keep for security, disable for testing)
 #define REQUIRE_HTTPS_CERT true
