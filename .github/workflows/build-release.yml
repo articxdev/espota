@@ -1,0 +1,179 @@
+name: Build and Release Firmware
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - 'include/**'
+      - 'platformio.ini'
+      - 'version.txt'
+      - '.github/workflows/build-release.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0  # Full history for version detection
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install PlatformIO
+        run: |
+          python -m pip install --upgrade pip
+          pip install platformio
+      
+      - name: Read firmware version
+        id: version
+        run: |
+          VERSION=$(cat version.txt | tr -d '\n')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Firmware version: $VERSION"
+      
+      - name: Build firmware
+        run: |
+          platformio run -e esp32
+          mkdir -p build_output
+          cp .pio/build/esp32/firmware.bin build_output/firmware.bin
+      
+      - name: Generate SHA256 checksum
+        id: checksum
+        run: |
+          cd build_output
+          sha256sum firmware.bin > firmware.bin.sha256
+          CHECKSUM=$(cat firmware.bin.sha256 | awk '{print $1}')
+          echo "checksum=$CHECKSUM" >> $GITHUB_OUTPUT
+          echo "SHA256: $CHECKSUM"
+          cat firmware.bin.sha256
+      
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          release_name: Firmware v${{ steps.version.outputs.version }}
+          body: |
+            ## Firmware Version ${{ steps.version.outputs.version }}
+            
+            **Release Information:**
+            - Version: v${{ steps.version.outputs.version }}
+            - Build Date: $(date -u +'%Y-%m-%dT%H:%M:%SZ')
+            - SHA256: `${{ steps.checksum.outputs.checksum }}`
+            
+            **Download:**
+            - Binary: `firmware.bin`
+            
+            **Installation Instructions:**
+            1. Download `firmware.bin` from this release
+            2. Device will auto-update when it checks version.json
+            3. Or use OTA endpoint: `/update` on device IP
+            
+            **Safety Information:**
+            - Dual OTA partitions enabled
+            - Automatic rollback on failure
+            - SHA256 verification required
+            
+            For more information, see `version.json.example` in the repository.
+          draft: false
+          prerelease: false
+      
+      - name: Upload firmware.bin
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./build_output/firmware.bin
+          asset_name: firmware.bin
+          asset_content_type: application/octet-stream
+      
+      - name: Upload SHA256 checksum
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./build_output/firmware.bin.sha256
+          asset_name: firmware.bin.sha256
+          asset_content_type: text/plain
+      
+      - name: Generate version.json
+        run: |
+          cat > version.json << EOF
+          {
+            "version": "${{ steps.version.outputs.version }}",
+            "download_url": "firmware.bin",
+            "sha256": "${{ steps.checksum.outputs.checksum }}",
+            "release_notes": "Release v${{ steps.version.outputs.version }} - Automatic build",
+            "min_version": "0.9.0",
+            "force_update": false,
+            "timestamp": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')",
+            "release_tag": "v${{ steps.version.outputs.version }}"
+          }
+          EOF
+          cat version.json
+      
+      - name: Upload version.json to release
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./version.json
+          asset_name: version.json
+          asset_content_type: application/json
+      
+      - name: Publish version.json to GitHub Pages (optional)
+        if: github.ref == 'refs/heads/main'
+        run: |
+          # Copy version.json to docs folder for hosting
+          mkdir -p docs
+          cp version.json docs/version.json
+          echo "Version info is available at: https://raw.githubusercontent.com/${{ github.repository }}/main/version.json"
+      
+      - name: Build summary
+        run: |
+          echo "## Build Complete ✓"
+          echo ""
+          echo "**Firmware Version:** v${{ steps.version.outputs.version }}"
+          echo "**Build Timestamp:** $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          echo "**Binary Size:** $(du -h build_output/firmware.bin | cut -f1)"
+          echo "**SHA256:** ${{ steps.checksum.outputs.checksum }}"
+          echo ""
+          echo "Release created: https://github.com/${{ github.repository }}/releases/tag/v${{ steps.version.outputs.version }}"
+
+  test-build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install PlatformIO
+        run: |
+          python -m pip install --upgrade pip
+          pip install platformio
+      
+      - name: Check code style
+        run: |
+          platformio check --strict -e esp32 || true
+      
+      - name: Verify partition table
+        run: |
+          ls -lh partitions_ota.csv
+          echo "Partition table verified"

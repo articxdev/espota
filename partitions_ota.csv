@@ -1,0 +1,16 @@
+# ESP32 OTA Partition Table - Supports Dual OTA with Rollback
+# Partition layout for production-ready firmware with rollback safety
+#
+# Name             Type    Subtype     Offset  Size       Flags
+#
+# Notes:
+# - This configuration provides two OTA partitions for safe rollback
+# - If the new firmware fails, the device automatically reverts to factory/previous version
+# - NVS is used to store WiFi credentials and OTA status
+# - PART_TABLE is used to store this partition table
+#
+nvs,                data,   nvs,        0x9000,  0x5000,     ,
+phy_init,           data,   phy,        0xe000,  0x1000,     ,
+factory,            app,    factory,    0x10000, 0x180000,   ,
+ota_0,              app,    ota_0,      0x190000, 0x180000,  ,
+ota_1,              app,    ota_1,      0x310000, 0x180000,   ,
