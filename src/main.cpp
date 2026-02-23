@@ -69,7 +69,6 @@ void initializeSerial() {
     logMessage("INFO", "ESP32 FIRMWARE BOOT");
     logMessage("INFO", "============================================");
     Serial.printf("Firmware Version: %s\n", FIRMWARE_VERSION);
-    Serial.printf("Build Number: %d\n", __COMPILATION_DATE__[0]);
     logMessage("INFO", "Serial initialized successfully");
 }
 
@@ -94,25 +93,18 @@ void validateFirmware() {
     logMessage("INFO", "Starting firmware validation...");
     
     // Get current running partition
-    esp_partition_iterator_t pi = esp_partition_find(
-        ESP_PARTITION_TYPE_APP, 
-        ESP_PARTITION_SUBTYPE_APP_RUNNING, 
-        NULL
-    );
+    const esp_partition_t* partition = esp_ota_get_running_partition();
     
-    if (!pi) {
+    if (!partition) {
         logMessage("ERROR", "Current partition not found!");
         return;
     }
-    
-    const esp_partition_t* partition = esp_partition_get(pi);
-    esp_partition_iterator_release(pi);
     
     logMessage("INFO", "Validating current firmware...");
     Serial.printf("Running partition: %s\n", partition->label);
     
     // Check if firmware is in rollback/testing state
-    esp_ota_img_state_t ota_state;
+    esp_ota_img_states_t ota_state;
     esp_err_t err = esp_ota_get_state_partition(partition, &ota_state);
     
     if (err != ESP_OK) {
@@ -219,10 +211,7 @@ VersionInfo getLatestVersionInfo() {
     if (httpCode == HTTP_CODE_OK) {
         String payload = http.getString();
         
-        pinMode(LED_BUILTIN, OUTPUT);
-        digitalWrite(LED_BUILTIN, HIGH);  // LED ON
-        
-        StaticJsonDocument<256> doc;
+        JsonDocument doc;
         DeserializationError error = deserializeJson(doc, payload);
         
         if (!error) {
@@ -236,8 +225,6 @@ VersionInfo getLatestVersionInfo() {
         } else {
             logMessage("ERROR", "Failed to parse version JSON");
         }
-        
-        digitalWrite(LED_BUILTIN, LOW);  // LED OFF
     } else {
         Serial.printf("HTTP error: %d\n", httpCode);
         logMessage("ERROR", "Failed to fetch version info");
