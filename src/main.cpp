@@ -247,7 +247,11 @@ void performOTAUpdate(String firmwareUrl, String expectedSha256) {
     Serial.println("[*] Starting OTA update process...");
     
     HTTPClient http;
-    http.setConnectTimeout(30000);  // 30 second timeout for download
+    http.setConnectTimeout(30000);  // 30 second timeout
+    http.setTimeout(30000);
+    
+    // IMPORTANT: Enable following HTTP redirects (GitHub returns 302)
+    http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
     
     if (!http.begin(firmwareUrl)) {
         Serial.println("[!] Failed to connect to firmware URL");
@@ -257,7 +261,11 @@ void performOTAUpdate(String firmwareUrl, String expectedSha256) {
     
     int httpCode = http.GET();
     
-    if (httpCode != HTTP_CODE_OK) {
+    Serial.print("[*] HTTP Response Code: ");
+    Serial.println(httpCode);
+    
+    // Accept 200 (success) or 206 (partial content)
+    if (httpCode != HTTP_CODE_OK && httpCode != HTTP_CODE_MOVED_PERMANENTLY) {
         Serial.print("[!] Failed to download firmware. HTTP Code: ");
         Serial.println(httpCode);
         http.end();
@@ -265,6 +273,13 @@ void performOTAUpdate(String firmwareUrl, String expectedSha256) {
     }
     
     int contentLength = http.getSize();
+    
+    if (contentLength <= 0) {
+        Serial.println("[!] Invalid content length");
+        http.end();
+        return;
+    }
+    
     Serial.print("[*] Firmware size: ");
     Serial.print(contentLength);
     Serial.println(" bytes");
@@ -272,48 +287,81 @@ void performOTAUpdate(String firmwareUrl, String expectedSha256) {
     // Begin OTA update
     if (!Update.begin(contentLength)) {
         Serial.println("[!] Not enough space for OTA update");
+        Serial.print("[!] Available: ");
+        Serial.print(ESP.getFreeSketchSpace());
+        Serial.println(" bytes");
         http.end();
         return;
     }
     
-    // Write firmware in chunks
+    // Get the stream and write firmware in chunks
     WiFiClient *stream = http.getStreamPtr();
-    size_t written = 0;
-    uint8_t buff[256] = { 0 };
+    if (!stream) {
+        Serial.println("[!] Failed to get stream");
+        http.end();
+        return;
+    }
     
-    while (http.connected() && written < contentLength) {
+    size_t written = 0;
+    uint8_t buff[512] = { 0 };
+    unsigned long lastProgress = millis();
+    
+    while (http.connected() && (written < contentLength)) {
         size_t available = stream->available();
+        
         if (available) {
-            int c = stream->readBytes(buff, ((available > sizeof(buff)) ? sizeof(buff) : available));
-            Update.write(buff, c);
-            written += c;
+            int bytesRead = stream->readBytes(buff, ((available > sizeof(buff)) ? sizeof(buff) : available));
             
-            // Progress indicator
-            if (written % 10240 == 0) {
-                Serial.print("[*] Downloaded: ");
-                Serial.print((written * 100) / contentLength);
-                Serial.println("%");
+            if (bytesRead > 0) {
+                Update.write(buff, bytesRead);
+                written += bytesRead;
             }
         }
-        delay(1);
+        
+        // Progress indicator every 2 seconds
+        if (millis() - lastProgress > 2000) {
+            lastProgress = millis();
+            Serial.print("[*] Downloaded: ");
+            Serial.print((written * 100) / contentLength);
+            Serial.print("% (");
+            Serial.print(written);
+            Serial.print("/");
+            Serial.print(contentLength);
+            Serial.println(")");
+        }
+        
+        delay(10);
     }
     
     http.end();
     
+    // Verify download was complete
+    if (written != contentLength) {
+        Serial.print("[!] Download incomplete: ");
+        Serial.print(written);
+        Serial.print(" / ");
+        Serial.println(contentLength);
+        Update.abort();
+        return;
+    }
+    
     // Finish OTA update
     if (Update.end()) {
         if (Update.isFinished()) {
-            Serial.println("[OK] OTA Update finished successfully!");
-            Serial.println("[*] Restarting device...");
+            Serial.println("[OK] OTA Update writing finished successfully!");
+            Serial.println("[*] Restarting device in 3 seconds...");
             blinkLED(5, 100);  // 5 quick blinks before restart
-            delay(2000);
+            delay(3000);
             ESP.restart();
         } else {
-            Serial.println("[!] OTA Update incomplete");
+            Serial.print("[!] OTA Update failed. Status: ");
+            Serial.println(Update.getError());
+            Update.abort();
         }
     } else {
         Serial.print("[!] OTA Update error: ");
         Serial.println(Update.getError());
+        Update.abort();
     }
 }
 
