@@ -1,6 +1,9 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
+// Secret keys (git-ignored) - copy secrets.h.example to secrets.h
+#include "secrets.h"
+
 // ============================================================
 // FIRMWARE CONFIGURATION
 // ============================================================
@@ -14,9 +17,9 @@
 // ============================================================
 
 // AP Settings for first-time setup (hidden SSID)
-#define AP_SSID "ESP32"          // Hidden WiFi hotspot SSID
-#define AP_PASSWORD "esp12345"   // AP password (min 8 chars)
-#define AP_HIDDEN false                   // Hide the setup hotspot
+#define AP_SSID    "ESP32"   // Hotspot SSID for provisioning portal
+// AP_PASSWORD is defined in secrets.h
+#define AP_HIDDEN  false     // Hide the setup hotspot
 
 // WiFiManager settings
 #define WIFI_TIMEOUT 180                 // Timeout in seconds for WiFi setup
@@ -86,9 +89,7 @@
 // ============================================================
 // FIREBASE REALTIME DATABASE
 // ============================================================
-// Regional database URL (Asia Southeast region)
-#define FIREBASE_URL        "https://fruit-b892a-default-rtdb.asia-southeast1.firebasedatabase.app"
-#define FIREBASE_AUTH       "hJWrtY9HdrYaDo2NsFeA9351rsh8U6TC9dIMeaVb"  // Database secret
+// FIREBASE_URL and FIREBASE_AUTH are defined in secrets.h
 #define FIREBASE_DEVICE_ID  "esp32_001"
 #define FIREBASE_BASE_PATH  "/devices/" FIREBASE_DEVICE_ID
 #define FIREBASE_UPDATE_INTERVAL_MS  5000  // Push data every 5 seconds
