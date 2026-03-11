@@ -1,5 +1,6 @@
 // ============================================================
-// ESP32 FIRMWARE WITH WIFI PROVISIONING & OTA UPDATES
+// ESP32 TEMPERATURE CONTROL SYSTEM
+// WiFi Provisioning + OTA + Sensors + Firebase Realtime DB
 // ============================================================
 
 #include <Arduino.h>
@@ -7,47 +8,102 @@
 #include <HTTPClient.h>
 #include <Update.h>
 #include <ArduinoJson.h>
+#include <Wire.h>
+#include <OneWire.h>
+#include <DallasTemperature.h>
+#include <Adafruit_SHT31.h>
+#include <Firebase_ESP_Client.h>
+#include "addons/TokenHelper.h"   // Firebase token callback
+#include "addons/RTDBHelper.h"    // Firebase RTDB utility
 #include "config.h"
 
-// Global variables
-WiFiManager wifiManager;
-unsigned long lastOTACheck = 0;
-bool provisioningMode = false;
+// ============================================================
+// HARDWARE OBJECTS
+// ============================================================
+OneWire         oneWire1(PIN_TEMP_SENSOR1);
+OneWire         oneWire2(PIN_TEMP_SENSOR2);
+DallasTemperature tempSensor1(&oneWire1);
+DallasTemperature tempSensor2(&oneWire2);
+Adafruit_SHT31  sht31;
 
-// Function declarations
+// ============================================================
+// FIREBASE OBJECTS
+// ============================================================
+FirebaseData    fbdo;
+FirebaseAuth    fbAuth;
+FirebaseConfig  fbConfig;
+bool            firebaseReady = false;
+
+// ============================================================
+// WIFI
+// ============================================================
+WiFiManager wifiManager;
+bool        provisioningMode = false;
+
+// ============================================================
+// TIMERS
+// ============================================================
+unsigned long lastOTACheck      = 0;
+unsigned long lastFirebaseUpdate = 0;
+unsigned long lastSensorRead    = 0;
+
+// ============================================================
+// SENSOR READINGS
+// ============================================================
+float temp1           = -127.0f;   // DS18B20 sensor 1
+float temp2           = -127.0f;   // DS18B20 sensor 2
+float ambientTemp     = -127.0f;   // SHT31 temperature
+float ambientHumidity = 0.0f;      // SHT31 humidity
+
+// ============================================================
+// RELAY / LED STATES
+// ============================================================
+bool heaterOn = false;
+bool refrigOn = false;
+bool fanOn    = false;
+
+// ============================================================
+// FUNCTION DECLARATIONS
+// ============================================================
+void initializePins();
+void initializeSensors();
+void initializeFirebase();
 void initializeWiFi();
 void setupWiFiCallbacks();
+void readSensors();
+void applyRelayStates();
+void pushToFirebase();
+void readRelayCommandsFromFirebase();
 void checkForUpdates();
 void performOTAUpdate(String firmwareUrl, String expectedSha256);
-void blinkLED(int times, int delayMs);
-void printStartupInfo();
 
 // ============================================================
 // SETUP
 // ============================================================
 void setup() {
-    delay(1000);  // Let hardware stabilize
-    Serial.begin(115200);
+    delay(1000);
+    Serial.begin(SERIAL_BAUD_RATE);
     delay(500);
-    
-    // Print startup banner
-    Serial.println("\n\n" "================================");
-    Serial.println("ESP32 FIRMWARE v" FIRMWARE_VERSION);
+
+    Serial.println("\n\n================================");
+    Serial.println("ESP32 TEMP CONTROL v" FIRMWARE_VERSION);
     Serial.println("Author: " FIRMWARE_AUTHOR);
     Serial.println("================================\n");
-    
-    // Initialize GPIO
-    pinMode(23, OUTPUT);
-    digitalWrite(23, LOW);
-    Serial.println("[OK] GPIO 23 (LED) initialized");
-    
-    // Initialize WiFi with provisioning
+
+    initializePins();
+    initializeSensors();
+
     Serial.println("[*] Initializing WiFi provisioning...");
     initializeWiFi();
-    
-    // Setup OTA check timer
-    lastOTACheck = millis();
-    
+
+    if (WiFi.status() == WL_CONNECTED) {
+        initializeFirebase();
+    }
+
+    lastOTACheck      = millis();
+    lastFirebaseUpdate = millis();
+    lastSensorRead    = millis();
+
     Serial.println("[OK] Setup complete - entering main loop");
     Serial.println("================================\n");
 }
@@ -56,132 +112,270 @@ void setup() {
 // MAIN LOOP
 // ============================================================
 void loop() {
-    // ===== CORE HARDWARE ALWAYS RUNS (WiFi INDEPENDENT) =====
-    static unsigned long lastHardwareTick = 0;
-    if (millis() - lastHardwareTick > 1000) {  // Toggle every 1 second
-        lastHardwareTick = millis();
-        
-        // LED blink pattern: 1sec ON, 1sec OFF
-        static bool ledState = false;
-        ledState = !ledState;
-        digitalWrite(23, ledState ? HIGH : LOW);
-        
-        // Always show hardware is working
-        Serial.print("[CORE] LED ");
-        Serial.println(ledState ? "ON" : "OFF");
-    }
-    
-    // ===== WiFi & OTA FEATURES (Optional) =====
-    // Handle WiFiManager background tasks
     wifiManager.process();
-    
-    // Monitor WiFi connection
+
+    // ----- WiFi watchdog: reconnect every 5 s if lost ------
     static unsigned long lastWiFiCheck = 0;
-    if (millis() - lastWiFiCheck > 5000) {  // Check every 5 seconds
+    if (millis() - lastWiFiCheck > 5000) {
         lastWiFiCheck = millis();
-        
         if (WiFi.status() != WL_CONNECTED && !provisioningMode) {
-            Serial.println("[!] WiFi disconnected! Attempting to reconnect...");
+            Serial.println("[!] WiFi lost - reconnecting...");
             wifiManager.autoConnect(AP_SSID, AP_PASSWORD);
-            
             if (WiFi.status() == WL_CONNECTED) {
-                Serial.println("[OK] WiFi reconnected!");
-                Serial.print("[OK] IP Address: ");
-                Serial.println(WiFi.localIP());
+                Serial.println("[OK] WiFi reconnected: " + WiFi.localIP().toString());
+                if (!firebaseReady) initializeFirebase();
             }
         }
     }
-    
-    // Check for OTA updates every OTA_CHECK_INTERVAL_SECONDS
-    if (millis() - lastOTACheck > (OTA_CHECK_INTERVAL_SECONDS * 1000)) {
+
+    // ----- Read sensors every 2 s --------------------------
+    if (millis() - lastSensorRead > 2000) {
+        lastSensorRead = millis();
+        readSensors();
+        applyRelayStates();
+    }
+
+    // ----- Firebase: push sensor data & read commands ------
+    if (WiFi.status() == WL_CONNECTED && firebaseReady) {
+        if (millis() - lastFirebaseUpdate > FIREBASE_UPDATE_INTERVAL_MS) {
+            lastFirebaseUpdate = millis();
+            readRelayCommandsFromFirebase();
+            pushToFirebase();
+        }
+    }
+
+    // ----- OTA check ----------------------------------------
+    if (millis() - lastOTACheck > (OTA_CHECK_INTERVAL_SECONDS * 1000UL)) {
         lastOTACheck = millis();
-        
         if (WiFi.status() == WL_CONNECTED) {
             Serial.println("\n[*] Checking for firmware updates...");
             checkForUpdates();
-        } else if (!provisioningMode) {
-            Serial.println("[!] WiFi not connected - hardware still running, OTA will retry");
         }
     }
+}
+
+// ============================================================
+// PIN INITIALIZATION
+// ============================================================
+void initializePins() {
+    // Relays
+    pinMode(PIN_RELAY_HEATER, OUTPUT); digitalWrite(PIN_RELAY_HEATER, LOW);
+    pinMode(PIN_RELAY_REFRIG, OUTPUT); digitalWrite(PIN_RELAY_REFRIG, LOW);
+    pinMode(PIN_RELAY_FAN,    OUTPUT); digitalWrite(PIN_RELAY_FAN,    LOW);
+
+    // Status LEDs
+    pinMode(PIN_LED_HEATER, OUTPUT); digitalWrite(PIN_LED_HEATER, LOW);
+    pinMode(PIN_LED_REFRIG, OUTPUT); digitalWrite(PIN_LED_REFRIG, LOW);
+    pinMode(PIN_LED_FAN,    OUTPUT); digitalWrite(PIN_LED_FAN,    LOW);
+
+    Serial.println("[OK] GPIO initialized:");
+    Serial.println("     Relay  Heater  -> PIN " + String(PIN_RELAY_HEATER));
+    Serial.println("     Relay  Refrig  -> PIN " + String(PIN_RELAY_REFRIG));
+    Serial.println("     Relay  Fan     -> PIN " + String(PIN_RELAY_FAN));
+    Serial.println("     LED    Heater  -> PIN " + String(PIN_LED_HEATER));
+    Serial.println("     LED    Refrig  -> PIN " + String(PIN_LED_REFRIG));
+    Serial.println("     LED    Fan     -> PIN " + String(PIN_LED_FAN));
+    Serial.println("     Temp1  DS18B20 -> PIN " + String(PIN_TEMP_SENSOR1));
+    Serial.println("     Temp2  DS18B20 -> PIN " + String(PIN_TEMP_SENSOR2));
+    Serial.println("     I2C    SDA     -> PIN " + String(PIN_I2C_SDA));
+    Serial.println("     I2C    SCL     -> PIN " + String(PIN_I2C_SCL));
+}
+
+// ============================================================
+// SENSOR INITIALIZATION
+// ============================================================
+void initializeSensors() {
+    // DS18B20 sensors
+    tempSensor1.begin();
+    tempSensor2.begin();
+    Serial.print("[OK] DS18B20 Sensor1 devices found: ");
+    Serial.println(tempSensor1.getDeviceCount());
+    Serial.print("[OK] DS18B20 Sensor2 devices found: ");
+    Serial.println(tempSensor2.getDeviceCount());
+
+    // I2C (SHT31) sensor
+    Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
+    if (sht31.begin(I2C_SENSOR_ADDR)) {
+        Serial.println("[OK] SHT31 I2C sensor ready at address 0x" +
+                       String(I2C_SENSOR_ADDR, HEX));
+    } else {
+        Serial.println("[!] SHT31 not found - check wiring / sensor address");
+    }
+}
+
+// ============================================================
+// FIREBASE INITIALIZATION
+// ============================================================
+void initializeFirebase() {
+    Serial.println("[*] Connecting to Firebase...");
+
+    fbConfig.database_url  = FIREBASE_URL;   // regional DB needs full URL
+    fbConfig.signer.tokens.legacy_token = FIREBASE_AUTH;
+    fbConfig.token_status_callback = tokenStatusCallback;  // token refresh helper
+
+    Firebase.begin(&fbConfig, &fbAuth);
+    Firebase.reconnectWiFi(true);
+
+    if (Firebase.ready()) {
+        firebaseReady = true;
+        Serial.println("[OK] Firebase connected!");
+        // Write initial online status
+        Firebase.RTDB.setString(&fbdo,
+            String(FIREBASE_BASE_PATH) + "/status/state", "online");
+        Firebase.RTDB.setString(&fbdo,
+            String(FIREBASE_BASE_PATH) + "/status/firmware", FIRMWARE_VERSION);
+    } else {
+        Serial.println("[!] Firebase connection failed - will retry");
+    }
+}
+
+// ============================================================
+// READ SENSORS
+// ============================================================
+void readSensors() {
+    // DS18B20 Sensor 1 (pin 27)
+    tempSensor1.requestTemperatures();
+    temp1 = tempSensor1.getTempCByIndex(0);
+
+    // DS18B20 Sensor 2 (pin 12)
+    tempSensor2.requestTemperatures();
+    temp2 = tempSensor2.getTempCByIndex(0);
+
+    // SHT31 I2C Sensor (pins 21, 22)
+    float t = sht31.readTemperature();
+    float h = sht31.readHumidity();
+    if (!isnan(t)) ambientTemp     = t;
+    if (!isnan(h)) ambientHumidity = h;
+
+    Serial.println("[SENSOR] Temp1: " + String(temp1,1) + "°C  |  " +
+                   "Temp2: " + String(temp2,1) + "°C  |  " +
+                   "Ambient: " + String(ambientTemp,1) + "°C  " +
+                   String(ambientHumidity,1) + "%RH");
+}
+
+// ============================================================
+// RELAY & LED CONTROL
+// ============================================================
+void applyRelayStates() {
+    // Write relay outputs
+    digitalWrite(PIN_RELAY_HEATER, heaterOn ? HIGH : LOW);
+    digitalWrite(PIN_RELAY_REFRIG, refrigOn ? HIGH : LOW);
+    digitalWrite(PIN_RELAY_FAN,    fanOn    ? HIGH : LOW);
+
+    // Mirror relay state to status LEDs
+    digitalWrite(PIN_LED_HEATER, heaterOn ? HIGH : LOW);
+    digitalWrite(PIN_LED_REFRIG, refrigOn ? HIGH : LOW);
+    digitalWrite(PIN_LED_FAN,    fanOn    ? HIGH : LOW);
+
+    Serial.println("[RELAY] Heater:" + String(heaterOn ? "ON ":"OFF") +
+                   "  Refrig:" + String(refrigOn ? "ON ":"OFF") +
+                   "  Fan:"    + String(fanOn    ? "ON ":"OFF"));
+}
+
+// ============================================================
+// PUSH SENSOR DATA TO FIREBASE
+// ============================================================
+void pushToFirebase() {
+    if (!Firebase.ready()) {
+        firebaseReady = Firebase.ready();
+        return;
+    }
+
+    String base = String(FIREBASE_BASE_PATH);
+    bool ok = true;
+
+    // Sensor data
+    ok &= Firebase.RTDB.setFloat(&fbdo,  base + "/sensors/temp1",            temp1);
+    ok &= Firebase.RTDB.setFloat(&fbdo,  base + "/sensors/temp2",            temp2);
+    ok &= Firebase.RTDB.setFloat(&fbdo,  base + "/sensors/ambient_temp",     ambientTemp);
+    ok &= Firebase.RTDB.setFloat(&fbdo,  base + "/sensors/ambient_humidity", ambientHumidity);
+
+    // Relay states (actual hardware state)
+    ok &= Firebase.RTDB.setBool(&fbdo,   base + "/relays/heater_state", heaterOn);
+    ok &= Firebase.RTDB.setBool(&fbdo,   base + "/relays/refrig_state", refrigOn);
+    ok &= Firebase.RTDB.setBool(&fbdo,   base + "/relays/fan_state",    fanOn);
+
+    // Device diagnostics
+    ok &= Firebase.RTDB.setInt(&fbdo,    base + "/status/rssi",     WiFi.RSSI());
+    ok &= Firebase.RTDB.setInt(&fbdo,    base + "/status/free_heap", ESP.getFreeHeap());
+    ok &= Firebase.RTDB.setInt(&fbdo,    base + "/status/uptime_s",  millis() / 1000);
+
+    if (ok) {
+        Serial.println("[FB] Data pushed to Firebase successfully");
+    } else {
+        Serial.println("[FB] Push error: " + fbdo.errorReason());
+    }
+}
+
+// ============================================================
+// READ RELAY COMMANDS FROM FIREBASE (remote control)
+// ============================================================
+void readRelayCommandsFromFirebase() {
+    if (!Firebase.ready()) return;
+
+    String base = String(FIREBASE_BASE_PATH) + "/relays/control";
+
+    bool cmd;
+
+    if (Firebase.RTDB.getBool(&fbdo, base + "/heater", &cmd)) {
+        heaterOn = cmd;
+    }
+    if (Firebase.RTDB.getBool(&fbdo, base + "/refrig", &cmd)) {
+        refrigOn = cmd;
+    }
+    if (Firebase.RTDB.getBool(&fbdo, base + "/fan",    &cmd)) {
+        fanOn = cmd;
+    }
+
+    Serial.println("[FB] Commands read - Heater:" + String(heaterOn ? "ON":"OFF") +
+                   " Refrig:" + String(refrigOn ? "ON":"OFF") +
+                   " Fan:"    + String(fanOn    ? "ON":"OFF"));
 }
 
 // ============================================================
 // WiFi INITIALIZATION & PROVISIONING
 // ============================================================
 void initializeWiFi() {
-    // Set WiFiManager configuration
     wifiManager.setConfigPortalTimeout(WIFI_PORTAL_TIMEOUT);
     wifiManager.setConnectTimeout(WIFI_TIMEOUT);
-    
-    // Set to try auto-connect first before starting portal
     wifiManager.setEnableConfigPortal(true);
-    
-    // Setup WiFi callbacks
     setupWiFiCallbacks();
-    
-    // Try to connect to previously saved WiFi SSID
-    Serial.println("[*] Attempting to reconnect to last known WiFi network...");
-    
-    // First attempt: try saved credentials with timeout
-    int attemptCount = 0;
-    int maxAttempts = 3;
+
+    Serial.println("[*] Attempting to reconnect to last known WiFi...");
+
     bool connected = false;
-    
-    while (attemptCount < maxAttempts && !connected) {
-        Serial.print("[*] Connection attempt ");
-        Serial.print(attemptCount + 1);
-        Serial.print(" of ");
-        Serial.println(maxAttempts);
-        
-        // Try to auto-connect to saved WiFi
+    for (int i = 0; i < 3 && !connected; i++) {
+        Serial.println("[*] Connection attempt " + String(i + 1) + " of 3");
         connected = wifiManager.autoConnect(AP_SSID, AP_PASSWORD);
-        
-        if (connected) {
-            break;
-        }
-        attemptCount++;
-        
-        if (attemptCount < maxAttempts) {
-            Serial.println("[!] Connection failed, retrying in 5 seconds...");
-            delay(5000);
-        }
+        if (!connected && i < 2) { Serial.println("[!] Retrying in 5 s..."); delay(5000); }
     }
-    
+
     if (connected) {
-        Serial.println("[OK] WiFi connected!");
-        Serial.print("[OK] SSID: ");
-        Serial.println(WiFi.SSID());
-        Serial.print("[OK] IP Address: ");
-        Serial.println(WiFi.localIP());
-        Serial.print("[OK] Signal Strength: ");
-        Serial.print(WiFi.RSSI());
-        Serial.println(" dBm");
         provisioningMode = false;
+        Serial.println("[OK] WiFi connected!");
+        Serial.println("[OK] SSID: "   + String(WiFi.SSID()));
+        Serial.println("[OK] IP:   "   + WiFi.localIP().toString());
+        Serial.println("[OK] RSSI: "   + String(WiFi.RSSI()) + " dBm");
     } else {
-        Serial.println("[!] Failed to reconnect to last WiFi network");
-        Serial.println("[*] Starting WiFi provisioning portal...");
-        Serial.print("[*] Connect to hotspot: ");
-        Serial.println(AP_SSID);
-        Serial.print("[*] Open browser at: http://192.168.1.1");
-        Serial.println("[*] Portal will timeout in " + String(WIFI_PORTAL_TIMEOUT) + " seconds");
-        Serial.println();
         provisioningMode = true;
+        Serial.println("[!] Connected failed - portal started");
+        Serial.println("[*] Connect to hotspot: " AP_SSID);
+        Serial.println("[*] Open: http://192.168.4.1");
     }
 }
 
 void setupWiFiCallbacks() {
-    // Called when WiFi settings are saved
     wifiManager.setSaveConfigCallback([]() {
         Serial.println("[OK] WiFi credentials saved!");
         provisioningMode = false;
     });
-    
-    // Called when provisioning portal starts
-    wifiManager.setAPCallback([](WiFiManager *myWiFiManager) {
-        Serial.println("[*] Provisioning portal started");
-        Serial.print("[*] AP SSID: ");
-        Serial.println(myWiFiManager->getConfigPortalSSID());
-        blinkLED(3, 200);  // 3 quick blinks to indicate provisioning
+    wifiManager.setAPCallback([](WiFiManager *wm) {
+        Serial.println("[*] Provisioning portal active: " + wm->getConfigPortalSSID());
+        // Fast-blink the fan LED to indicate provisioning mode
+        for (int i = 0; i < 6; i++) {
+            digitalWrite(PIN_LED_FAN, HIGH); delay(150);
+            digitalWrite(PIN_LED_FAN, LOW);  delay(150);
+        }
     });
 }
 
@@ -193,61 +387,41 @@ void checkForUpdates() {
         Serial.println("[!] WiFi not connected, skipping OTA check");
         return;
     }
-    
+
     HTTPClient http;
-    http.setConnectTimeout(10000);  // 10 second timeout
-    
-    Serial.print("[*] Fetching version info from: ");
-    Serial.println(VERSION_JSON_URL);
-    
+    http.setConnectTimeout(10000);
+    Serial.println("[*] Fetching version info from: " VERSION_JSON_URL);
+
     if (!http.begin(VERSION_JSON_URL)) {
         Serial.println("[!] Failed to begin HTTP request");
-        http.end();
         return;
     }
-    
+
     int httpCode = http.GET();
-    
     if (httpCode != HTTP_CODE_OK) {
-        Serial.print("[!] HTTP Error: ");
-        Serial.println(httpCode);
+        Serial.println("[!] HTTP Error: " + String(httpCode));
         http.end();
         return;
     }
-    
+
     String payload = http.getString();
     http.end();
-    
-    Serial.println("[OK] Version info received");
-    Serial.println("Response: " + payload);
-    
-    // Parse JSON
+
     JsonDocument doc;
-    DeserializationError error = deserializeJson(doc, payload);
-    
-    if (error) {
-        Serial.print("[!] JSON parse error: ");
-        Serial.println(error.c_str());
+    if (deserializeJson(doc, payload)) {
+        Serial.println("[!] JSON parse error");
         return;
     }
-    
-    // Extract version and download URL
-    String latestVersion = doc["version"] | "0.0.0";
-    String downloadUrl = doc["download_url"] | "";
-    String expectedSha256 = doc["sha256"] | "";
-    
-    Serial.print("[*] Latest version: ");
-    Serial.println(latestVersion);
-    Serial.print("[*] Current version: ");
-    Serial.println(FIRMWARE_VERSION);
-    
-    // Compare versions (simple string comparison)
+
+    String latestVersion = doc["version"]      | "0.0.0";
+    String downloadUrl   = doc["download_url"] | "";
+    String sha256        = doc["sha256"]        | "";
+
+    Serial.println("[*] Latest: " + latestVersion + "  Current: " FIRMWARE_VERSION);
+
     if (latestVersion != FIRMWARE_VERSION && !downloadUrl.isEmpty()) {
-        Serial.println("[!] New firmware available!");
-        Serial.print("[*] Downloading from: ");
-        Serial.println(downloadUrl);
-        
-        performOTAUpdate(downloadUrl, expectedSha256);
+        Serial.println("[!] New firmware available - starting OTA...");
+        performOTAUpdate(downloadUrl, sha256);
     } else {
         Serial.println("[OK] Firmware is up to date");
     }
@@ -255,175 +429,98 @@ void checkForUpdates() {
 
 void performOTAUpdate(String firmwareUrl, String expectedSha256) {
     Serial.println("[*] Starting OTA update process...");
-    
+
     HTTPClient http;
     http.setConnectTimeout(30000);
     http.setTimeout(30000);
-    
-    // Try up to 3 redirects
+
     for (int redirectCount = 0; redirectCount < 3; redirectCount++) {
-        Serial.print("[*] Attempt ");
-        Serial.print(redirectCount + 1);
-        Serial.print(": Connecting to ");
-        Serial.println(firmwareUrl);
-        
+        Serial.println("[*] Attempt " + String(redirectCount + 1) +
+                       ": Connecting to " + firmwareUrl);
+
         if (!http.begin(firmwareUrl)) {
             Serial.println("[!] Failed to connect to firmware URL");
             http.end();
             return;
         }
-        
+
         http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
         int httpCode = http.GET();
-        
-        Serial.print("[*] HTTP Response Code: ");
-        Serial.println(httpCode);
-        
-        // Handle redirects manually (302, 301, 307)
+        Serial.println("[*] HTTP Response: " + String(httpCode));
+
         if (httpCode == 301 || httpCode == 302 || httpCode == 307) {
-            String location = http.header("Location");
+            String loc = http.header("Location");
             http.end();
-            
-            if (location.length() > 0) {
-                Serial.print("[*] Redirected to: ");
-                Serial.println(location);
-                firmwareUrl = location;
-                continue;
-            }
+            if (loc.length() > 0) { firmwareUrl = loc; continue; }
         }
-        
-        // Success - proceed with download
-        if (httpCode == HTTP_CODE_OK || httpCode == 200) {
-            break;
-        }
-        
-        // Other error
-        if (redirectCount < 2) {
-            Serial.println("[!] Retrying...");
-            http.end();
-            delay(2000);
-        } else {
-            Serial.print("[!] Failed after retries. HTTP Code: ");
-            Serial.println(httpCode);
-            http.end();
-            return;
-        }
+
+        if (httpCode == HTTP_CODE_OK) break;
+
+        http.end();
+        if (redirectCount < 2) { delay(2000); } else { return; }
     }
-    
+
     int contentLength = http.getSize();
-    
     if (contentLength <= 0) {
         Serial.println("[!] Invalid content length");
         http.end();
         return;
     }
-    
-    Serial.print("[*] Firmware size: ");
-    Serial.print(contentLength);
-    Serial.println(" bytes");
-    
-    // Begin OTA update
+
+    Serial.println("[*] Firmware size: " + String(contentLength) + " bytes");
+
     if (!Update.begin(contentLength)) {
-        Serial.println("[!] Not enough space for OTA update");
-        Serial.print("[!] Available: ");
-        Serial.print(ESP.getFreeSketchSpace());
-        Serial.println(" bytes");
+        Serial.println("[!] Not enough space for OTA (free: " +
+                       String(ESP.getFreeSketchSpace()) + " bytes)");
         http.end();
         return;
     }
-    
-    // Get the stream and write firmware in chunks
+
     WiFiClient *stream = http.getStreamPtr();
-    if (!stream) {
-        Serial.println("[!] Failed to get stream");
-        http.end();
-        return;
-    }
-    
+    if (!stream) { Serial.println("[!] Stream error"); http.end(); return; }
+
     size_t written = 0;
-    uint8_t buff[512] = { 0 };
+    uint8_t buff[512] = {0};
     unsigned long lastProgress = millis();
-    
-    while (http.connected() && (written < contentLength)) {
-        size_t available = stream->available();
-        
-        if (available) {
-            int bytesRead = stream->readBytes(buff, ((available > sizeof(buff)) ? sizeof(buff) : available));
-            
-            if (bytesRead > 0) {
-                Update.write(buff, bytesRead);
-                written += bytesRead;
-            }
+
+    while (http.connected() && written < (size_t)contentLength) {
+        size_t avail = stream->available();
+        if (avail) {
+            int r = stream->readBytes(buff, min(avail, sizeof(buff)));
+            if (r > 0) { Update.write(buff, r); written += r; }
         }
-        
-        // Progress indicator every 2 seconds
         if (millis() - lastProgress > 2000) {
             lastProgress = millis();
-            Serial.print("[*] Downloaded: ");
-            Serial.print((written * 100) / contentLength);
-            Serial.print("% (");
-            Serial.print(written);
-            Serial.print("/");
-            Serial.print(contentLength);
-            Serial.println(")");
+            Serial.println("[*] Progress: " + String((written * 100) / contentLength) +
+                           "% (" + String(written) + "/" + String(contentLength) + ")");
         }
-        
         delay(10);
     }
-    
     http.end();
-    
-    // Verify download was complete
-    if (written != contentLength) {
-        Serial.print("[!] Download incomplete: ");
-        Serial.print(written);
-        Serial.print(" / ");
-        Serial.println(contentLength);
+
+    if (written != (size_t)contentLength) {
+        Serial.println("[!] Download incomplete - aborting");
         Update.abort();
         return;
     }
-    
-    // Finish OTA update
-    if (Update.end()) {
-        if (Update.isFinished()) {
-            Serial.println("[OK] OTA Update writing finished successfully!");
-            Serial.println("[*] Restarting device in 3 seconds...");
-            blinkLED(5, 100);
-            delay(3000);
-            ESP.restart();
-        } else {
-            Serial.print("[!] OTA Update failed. Status: ");
-            Serial.println(Update.getError());
-            Update.abort();
+
+    if (Update.end() && Update.isFinished()) {
+        // Signal all LEDs before reboot
+        for (int i = 0; i < 5; i++) {
+            digitalWrite(PIN_LED_HEATER, HIGH);
+            digitalWrite(PIN_LED_REFRIG, HIGH);
+            digitalWrite(PIN_LED_FAN,    HIGH);
+            delay(100);
+            digitalWrite(PIN_LED_HEATER, LOW);
+            digitalWrite(PIN_LED_REFRIG, LOW);
+            digitalWrite(PIN_LED_FAN,    LOW);
+            delay(100);
         }
+        Serial.println("[OK] OTA complete - restarting...");
+        delay(3000);
+        ESP.restart();
     } else {
-        Serial.print("[!] OTA Update error: ");
-        Serial.println(Update.getError());
+        Serial.println("[!] OTA failed: " + String(Update.getError()));
         Update.abort();
     }
-}
-
-// ============================================================
-// UTILITY FUNCTIONS
-// ============================================================
-void blinkLED(int times, int delayMs) {
-    for (int i = 0; i < times; i++) {
-        digitalWrite(23, HIGH);
-        delay(delayMs);
-        digitalWrite(23, LOW);
-        delay(delayMs);
-    }
-}
-
-void printStartupInfo() {
-    Serial.println("\n[INFO] Device Information:");
-    Serial.print("  - Chip Model: ");
-    Serial.println(ESP.getChipModel());
-    Serial.print("  - Flash Size: ");
-    Serial.print(ESP.getFlashChipSize() / 1024);
-    Serial.println(" KB");
-    Serial.print("  - Free Heap: ");
-    Serial.print(ESP.getFreeHeap() / 1024);
-    Serial.println(" KB");
-    Serial.println();
 }

@@ -64,9 +64,34 @@
 // GPIO HARDWARE CONTROL SETTINGS
 // ============================================================
 
-#define GPIO_OUTPUT_PIN 23      // GPIO 23 for LED/output control
-#define LED_ON_DURATION_MS 2000  // Turn ON for 2 seconds
-#define LED_OFF_DURATION_MS 2000 // Turn OFF for 2 seconds
+// ----- RELAY OUTPUTS (ACTIVE HIGH) -----
+#define PIN_RELAY_HEATER    19   // Relay for heater
+#define PIN_RELAY_REFRIG    23   // Relay for refrigeration
+#define PIN_RELAY_FAN       5    // Relay for fan
+
+// ----- STATUS LEDs -----
+#define PIN_LED_HEATER      2    // LED: heater active indicator
+#define PIN_LED_REFRIG      4    // LED: refrigeration active indicator
+#define PIN_LED_FAN         17   // LED: fan active indicator
+
+// ----- TEMPERATURE SENSORS (DS18B20 OneWire) -----
+#define PIN_TEMP_SENSOR1    27   // Temperature sensor 1 (OneWire)
+#define PIN_TEMP_SENSOR2    12   // Temperature sensor 2 (OneWire)
+
+// ----- I2C BUS (Temp + Humidity sensor e.g. SHT31) -----
+#define PIN_I2C_SDA         21   // I2C SDA
+#define PIN_I2C_SCL         22   // I2C SCL
+#define I2C_SENSOR_ADDR     0x44 // SHT31 default address (change if needed)
+
+// ============================================================
+// FIREBASE REALTIME DATABASE
+// ============================================================
+// Regional database URL (Asia Southeast region)
+#define FIREBASE_URL        "https://fruit-b892a-default-rtdb.asia-southeast1.firebasedatabase.app"
+#define FIREBASE_AUTH       "hJWrtY9HdrYaDo2NsFeA9351rsh8U6TC9dIMeaVb"  // Database secret
+#define FIREBASE_DEVICE_ID  "esp32_001"
+#define FIREBASE_BASE_PATH  "/devices/" FIREBASE_DEVICE_ID
+#define FIREBASE_UPDATE_INTERVAL_MS  5000  // Push data every 5 seconds
 
 // ============================================================
 // SYSTEM SETTINGS
