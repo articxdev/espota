@@ -76,61 +76,9 @@ jobs:
           echo "SHA256: $CHECKSUM"
           cat firmware.bin.sha256
       
-      - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: v${{ steps.version.outputs.version }}
-          release_name: Firmware v${{ steps.version.outputs.version }}
-          body: |
-            ## Firmware Version ${{ steps.version.outputs.version }}
-            
-            **Release Information:**
-            - Version: v${{ steps.version.outputs.version }}
-            - Build Date: $(date -u +'%Y-%m-%dT%H:%M:%SZ')
-            - SHA256: `${{ steps.checksum.outputs.checksum }}`
-            
-            **Download:**
-            - Binary: `firmware.bin`
-            
-            **Installation Instructions:**
-            1. Download `firmware.bin` from this release
-            2. Device will auto-update when it checks version.json
-            3. Or use OTA endpoint: `/update` on device IP
-            
-            **Safety Information:**
-            - Dual OTA partitions enabled
-            - Automatic rollback on failure
-            - SHA256 verification required
-            
-            For more information, see `version.json.example` in the repository.
-          draft: false
-          prerelease: false
-      
-      - name: Upload firmware.bin
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./build_output/firmware.bin
-          asset_name: firmware.bin
-          asset_content_type: application/octet-stream
-      
-      - name: Upload SHA256 checksum
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./build_output/firmware.bin.sha256
-          asset_name: firmware.bin.sha256
-          asset_content_type: text/plain
-      
       - name: Generate version.json
         run: |
+          BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
           cat > version.json << EOF
           {
             "version": "${{ steps.version.outputs.version }}",
@@ -139,21 +87,35 @@ jobs:
             "release_notes": "Release v${{ steps.version.outputs.version }} - Automatic build",
             "min_version": "0.9.0",
             "force_update": false,
-            "timestamp": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')",
+            "timestamp": "$BUILD_DATE",
             "release_tag": "v${{ steps.version.outputs.version }}"
           }
           EOF
           cat version.json
-      
-      - name: Upload version.json to release
-        uses: actions/upload-release-asset@v1
+
+      - name: Create or update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: Firmware v${{ steps.version.outputs.version }}
+          make_latest: true
+          fail_on_unmatched_files: true
+          files: |
+            build_output/firmware.bin
+            build_output/firmware.bin.sha256
+            version.json
+          body: |
+            ## Firmware v${{ steps.version.outputs.version }}
+
+            **SHA256:** `${{ steps.checksum.outputs.checksum }}`
+
+            **Installation:**
+            1. Device auto-updates via OTA when it checks `version.json`
+            2. Or flash manually with PlatformIO
+
+            **Features:** Dual OTA partitions · Auto rollback · Firebase RTDB · WiFi provisioning
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./version.json
-          asset_name: version.json
-          asset_content_type: application/json
       
       - name: Publish version.json and sync config.h to GitHub Pages
         if: github.ref == 'refs/heads/main'
