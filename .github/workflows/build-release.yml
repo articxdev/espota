@@ -93,7 +93,22 @@ jobs:
           EOF
           cat version.json
 
-      - name: Create or update GitHub Release
+      - name: Delete existing release and tag if present
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v${{ steps.version.outputs.version }}"
+          # Delete the GitHub release (if exists) - errors silently ignored
+          RELEASE_ID=$(gh api repos/${{ github.repository }}/releases/tags/$TAG --jq '.id' 2>/dev/null || true)
+          if [ -n "$RELEASE_ID" ] && [ "$RELEASE_ID" != "null" ]; then
+            gh api -X DELETE repos/${{ github.repository }}/releases/$RELEASE_ID
+            echo "[OK] Deleted existing release $TAG (id=$RELEASE_ID)"
+          fi
+          # Delete the git tag from remote (if exists)
+          git push --delete origin $TAG 2>/dev/null || true
+          echo "[OK] Tag $TAG cleared - ready for fresh release"
+
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.version.outputs.version }}
