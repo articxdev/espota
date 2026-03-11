@@ -24,6 +24,18 @@ jobs:
         with:
           fetch-depth: 0  # Full history for version detection
       
+      - name: Generate secrets.h from GitHub Secrets
+        run: |
+          cat > include/secrets.h << 'EOF'
+          #ifndef SECRETS_H
+          #define SECRETS_H
+          #define FIREBASE_URL  "${{ secrets.FIREBASE_URL }}"
+          #define FIREBASE_AUTH "${{ secrets.FIREBASE_AUTH }}"
+          #define AP_PASSWORD   "${{ secrets.AP_PASSWORD }}"
+          #endif // SECRETS_H
+          EOF
+          echo "[OK] secrets.h generated"
+
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
@@ -175,6 +187,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
       
+      - name: Generate secrets.h from GitHub Secrets
+        run: |
+          cat > include/secrets.h << 'EOF'
+          #ifndef SECRETS_H
+          #define SECRETS_H
+          #define FIREBASE_URL  "${{ secrets.FIREBASE_URL }}"
+          #define FIREBASE_AUTH "${{ secrets.FIREBASE_AUTH }}"
+          #define AP_PASSWORD   "${{ secrets.AP_PASSWORD }}"
+          #endif // SECRETS_H
+          EOF
+          echo "[OK] secrets.h generated"
+
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
