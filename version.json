@@ -1,10 +1,10 @@
 {
   "version": "1.1.4",
   "download_url": "https://github.com/articxdev/espota/releases/download/v1.1.4/firmware.bin",
-  "sha256": "3106c9b07aa55907d1581beb1549cdce02ec1cfc31ac9e9c1c6baf81e1232127",
+  "sha256": "7a8bf73b7fe77c9c0981472f7b2bf84bc6be72a254a116b5f6f336fac08a646a",
   "release_notes": "Release v1.1.4 - Automatic build",
   "min_version": "0.9.0",
   "force_update": false,
-  "timestamp": "2026-03-11T09:31:57Z",
+  "timestamp": "2026-03-11T09:39:15Z",
   "release_tag": "v1.1.4"
 }
