@@ -24,15 +24,17 @@ jobs:
           fetch-depth: 0
 
       - name: Generate secrets.h from GitHub Secrets
+        env:
+          FB_URL: ${{ secrets.FIREBASE_URL }}
+          FB_AUTH: ${{ secrets.FIREBASE_AUTH }}
+          AP_PASS: ${{ secrets.AP_PASSWORD }}
         run: |
-          cat > include/secrets.h << EOF
-#ifndef SECRETS_H
-#define SECRETS_H
-#define FIREBASE_URL  "${{ secrets.FIREBASE_URL }}"
-#define FIREBASE_AUTH "${{ secrets.FIREBASE_AUTH }}"
-#define AP_PASSWORD   "${{ secrets.AP_PASSWORD }}"
-#endif // SECRETS_H
-EOF
+          printf '%s\n' '#ifndef SECRETS_H' > include/secrets.h
+          printf '%s\n' '#define SECRETS_H' >> include/secrets.h
+          printf '#define FIREBASE_URL  "%s"\n' "$FB_URL" >> include/secrets.h
+          printf '#define FIREBASE_AUTH "%s"\n' "$FB_AUTH" >> include/secrets.h
+          printf '#define AP_PASSWORD   "%s"\n' "$AP_PASS" >> include/secrets.h
+          printf '%s\n' '#endif // SECRETS_H' >> include/secrets.h
           echo "[OK] secrets.h generated"
           cat include/secrets.h
 
@@ -83,18 +85,20 @@ EOF
       - name: Generate version.json
         run: |
           BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-          cat > version.json << EOF
-{
-  "version": "${{ steps.version.outputs.version }}",
-  "download_url": "https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.version }}/firmware.bin",
-  "sha256": "${{ steps.checksum.outputs.checksum }}",
-  "release_notes": "Release v${{ steps.version.outputs.version }} - Automatic build",
-  "min_version": "0.9.0",
-  "force_update": false,
-  "timestamp": "$BUILD_DATE",
-  "release_tag": "v${{ steps.version.outputs.version }}"
-}
-EOF
+          cat > version.json <<'JSONEOF'
+          {
+            "version": "${{ steps.version.outputs.version }}",
+            "download_url": "https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.version }}/firmware.bin",
+            "sha256": "${{ steps.checksum.outputs.checksum }}",
+            "release_notes": "Release v${{ steps.version.outputs.version }} - Automatic build",
+            "min_version": "0.9.0",
+            "force_update": false,
+            "timestamp": "TIMESTAMP_PLACEHOLDER",
+            "release_tag": "v${{ steps.version.outputs.version }}"
+          }
+          JSONEOF
+          sed -i 's/^          //' version.json
+          sed -i "s/TIMESTAMP_PLACEHOLDER/$BUILD_DATE/" version.json
           cat version.json
 
       - name: Delete existing release and tag if present
