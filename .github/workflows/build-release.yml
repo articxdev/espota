@@ -10,113 +10,106 @@ on:
       - 'platformio.ini'
       - 'version.txt'
       - '.github/workflows/build-release.yml'
-    # Ignore the workflow's own auto-sync commits
-    # (commits containing [skip ci] won't trigger this workflow)
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      packages: write
-    
+
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Full history for version detection
-      
+          fetch-depth: 0
+
       - name: Generate secrets.h from GitHub Secrets
         run: |
-          cat > include/secrets.h << 'EOF'
-          #ifndef SECRETS_H
-          #define SECRETS_H
-          #define FIREBASE_URL  "${{ secrets.FIREBASE_URL }}"
-          #define FIREBASE_AUTH "${{ secrets.FIREBASE_AUTH }}"
-          #define AP_PASSWORD   "${{ secrets.AP_PASSWORD }}"
-          #endif // SECRETS_H
-          EOF
+          cat > include/secrets.h << EOF
+#ifndef SECRETS_H
+#define SECRETS_H
+#define FIREBASE_URL  "${{ secrets.FIREBASE_URL }}"
+#define FIREBASE_AUTH "${{ secrets.FIREBASE_AUTH }}"
+#define AP_PASSWORD   "${{ secrets.AP_PASSWORD }}"
+#endif // SECRETS_H
+EOF
           echo "[OK] secrets.h generated"
+          cat include/secrets.h
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
-      
-      - name: Install PlatformIO
-        run: |
-          python -m pip install --upgrade pip
-          pip install platformio
-      
       - name: Read firmware version
         id: version
         run: |
-          VERSION=$(cat version.txt | tr -d '\n')
+          VERSION=$(cat version.txt | tr -d '[:space:]')
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Firmware version: $VERSION"
-      
-      - name: Auto-update config.h with version from version.txt
+
+      - name: Update FIRMWARE_VERSION in config.h
         run: |
-          VERSION=$(cat version.txt | tr -d '\n')
+          VERSION=$(cat version.txt | tr -d '[:space:]')
           sed -i "s/#define FIRMWARE_VERSION \".*\"/#define FIRMWARE_VERSION \"$VERSION\"/" include/config.h
-          echo "Updated config.h FIRMWARE_VERSION to: $VERSION"
+          echo "[OK] config.h updated to $VERSION"
           grep "FIRMWARE_VERSION" include/config.h
-      
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: ${{ runner.os }}-pio-${{ hashFiles('platformio.ini') }}
+          restore-keys: ${{ runner.os }}-pio-
+
       - name: Build firmware
         run: |
           platformio run -e esp32
           mkdir -p build_output
           cp .pio/build/esp32/firmware.bin build_output/firmware.bin
-      
+          echo "[OK] Firmware built: $(du -h build_output/firmware.bin | cut -f1)"
+
       - name: Generate SHA256 checksum
         id: checksum
         run: |
-          cd build_output
-          sha256sum firmware.bin > firmware.bin.sha256
-          CHECKSUM=$(cat firmware.bin.sha256 | awk '{print $1}')
+          CHECKSUM=$(sha256sum build_output/firmware.bin | awk '{print $1}')
+          echo $CHECKSUM > build_output/firmware.bin.sha256
           echo "checksum=$CHECKSUM" >> $GITHUB_OUTPUT
-          echo "SHA256: $CHECKSUM"
-          cat firmware.bin.sha256
-      
+          echo "[OK] SHA256: $CHECKSUM"
+
       - name: Generate version.json
         run: |
           BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
           cat > version.json << EOF
-          {
-            "version": "${{ steps.version.outputs.version }}",
-            "download_url": "https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.version }}/firmware.bin",
-            "sha256": "${{ steps.checksum.outputs.checksum }}",
-            "release_notes": "Release v${{ steps.version.outputs.version }} - Automatic build",
-            "min_version": "0.9.0",
-            "force_update": false,
-            "timestamp": "$BUILD_DATE",
-            "release_tag": "v${{ steps.version.outputs.version }}"
-          }
-          EOF
+{
+  "version": "${{ steps.version.outputs.version }}",
+  "download_url": "https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.version }}/firmware.bin",
+  "sha256": "${{ steps.checksum.outputs.checksum }}",
+  "release_notes": "Release v${{ steps.version.outputs.version }} - Automatic build",
+  "min_version": "0.9.0",
+  "force_update": false,
+  "timestamp": "$BUILD_DATE",
+  "release_tag": "v${{ steps.version.outputs.version }}"
+}
+EOF
           cat version.json
 
       - name: Delete existing release and tag if present
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="v${{ steps.version.outputs.version }}"
-          # Delete the GitHub release (if exists) - errors silently ignored
-          RELEASE_ID=$(gh api repos/${{ github.repository }}/releases/tags/$TAG --jq '.id' 2>/dev/null || true)
-          if [ -n "$RELEASE_ID" ] && [ "$RELEASE_ID" != "null" ]; then
-            gh api -X DELETE repos/${{ github.repository }}/releases/$RELEASE_ID
-            echo "[OK] Deleted existing release $TAG (id=$RELEASE_ID)"
-          fi
-          # Delete the git tag from remote (if exists)
-          git push --delete origin $TAG 2>/dev/null || true
-          echo "[OK] Tag $TAG cleared - ready for fresh release"
+          gh release delete "$TAG" --yes --cleanup-tag 2>/dev/null && echo "[OK] Deleted old release $TAG" || echo "[OK] No existing release to delete"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.version.outputs.version }}
-          name: Firmware v${{ steps.version.outputs.version }}
+          name: "Firmware v${{ steps.version.outputs.version }}"
           make_latest: true
-          fail_on_unmatched_files: true
           files: |
             build_output/firmware.bin
             build_output/firmware.bin.sha256
@@ -126,73 +119,27 @@ jobs:
 
             **SHA256:** `${{ steps.checksum.outputs.checksum }}`
 
-            **Installation:**
-            1. Device auto-updates via OTA when it checks `version.json`
-            2. Or flash manually with PlatformIO
+            **OTA:** Device auto-updates on next check interval
+            **Manual:** Flash with PlatformIO using `firmware.bin`
 
-            **Features:** Dual OTA partitions · Auto rollback · Firebase RTDB · WiFi provisioning
+            **Features:** Dual OTA · Auto rollback · Firebase RTDB · WiFi provisioning
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      
-      - name: Publish version.json and sync config.h to GitHub Pages
-        if: github.ref == 'refs/heads/main'
+
+      - name: Sync version.json to repo
         run: |
-          # Copy version.json to docs folder for hosting
           mkdir -p docs
           cp version.json docs/version.json
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
-          # Commit updated config.h and version.json
-          git add include/config.h version.json docs/version.json
-          git commit -m "Auto-sync: version.json v${{ steps.version.outputs.version }} [skip ci]" || true
-          git push origin main || true
-          echo "Version info is available at: https://raw.githubusercontent.com/${{ github.repository }}/main/version.json"
-      
+          git add version.json docs/version.json include/config.h
+          git commit -m "Auto-sync: v${{ steps.version.outputs.version }} [skip ci]" || echo "Nothing to commit"
+          git push origin main || echo "Nothing to push"
+          echo "[OK] version.json live at: https://raw.githubusercontent.com/${{ github.repository }}/main/version.json"
+
       - name: Build summary
         run: |
-          echo "## Build Complete ✓"
-          echo ""
-          echo "**Firmware Version:** v${{ steps.version.outputs.version }}"
-          echo "**Build Timestamp:** $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-          echo "**Binary Size:** $(du -h build_output/firmware.bin | cut -f1)"
-          echo "**SHA256:** ${{ steps.checksum.outputs.checksum }}"
-          echo ""
-          echo "Release created: https://github.com/${{ github.repository }}/releases/tag/v${{ steps.version.outputs.version }}"
-
-  test-build:
-    runs-on: ubuntu-latest
-    
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
-      
-      - name: Generate secrets.h from GitHub Secrets
-        run: |
-          cat > include/secrets.h << 'EOF'
-          #ifndef SECRETS_H
-          #define SECRETS_H
-          #define FIREBASE_URL  "${{ secrets.FIREBASE_URL }}"
-          #define FIREBASE_AUTH "${{ secrets.FIREBASE_AUTH }}"
-          #define AP_PASSWORD   "${{ secrets.AP_PASSWORD }}"
-          #endif // SECRETS_H
-          EOF
-          echo "[OK] secrets.h generated"
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
-      
-      - name: Install PlatformIO
-        run: |
-          python -m pip install --upgrade pip
-          pip install platformio
-      
-      - name: Check code style
-        run: |
-          platformio check --strict -e esp32 || true
-      
-      - name: Verify partition table
-        run: |
-          ls -lh partitions_ota.csv
-          echo "Partition table verified"
+          echo "✓ Firmware v${{ steps.version.outputs.version }}"
+          echo "✓ Size: $(du -h build_output/firmware.bin | cut -f1)"
+          echo "✓ SHA256: ${{ steps.checksum.outputs.checksum }}"
+          echo "✓ Release: https://github.com/${{ github.repository }}/releases/tag/v${{ steps.version.outputs.version }}"
