@@ -10,6 +10,8 @@ on:
       - 'platformio.ini'
       - 'version.txt'
       - '.github/workflows/build-release.yml'
+    # Ignore the workflow's own auto-sync commits
+    # (commits containing [skip ci] won't trigger this workflow)
 
 jobs:
   build:
@@ -142,7 +144,7 @@ jobs:
           git config user.email "actions@github.com"
           # Commit updated config.h and version.json
           git add include/config.h version.json docs/version.json
-          git commit -m "Auto-sync: Update version to v${{ steps.version.outputs.version }}" || true
+          git commit -m "Auto-sync: version.json v${{ steps.version.outputs.version }} [skip ci]" || true
           git push origin main || true
           echo "Version info is available at: https://raw.githubusercontent.com/${{ github.repository }}/main/version.json"
       
