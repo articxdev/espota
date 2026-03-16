@@ -9,7 +9,7 @@
 // ============================================================
 
 // Firmware Version
-#define FIRMWARE_VERSION "1.2.2"
+#define FIRMWARE_VERSION "1.2.3"
 #define FIRMWARE_AUTHOR "ESP32 Project"
 
 // ============================================================
