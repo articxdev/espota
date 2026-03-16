@@ -86,6 +86,25 @@
 #define PIN_I2C_SCL         22   // I2C SCL
 #define I2C_SENSOR_ADDR     0x44 // SHT31 default address (change if needed)
 
+// ----- AUTOMATIC TEMPERATURE CONTROL -----
+#define FAN_ON_DURATION_MS      120000UL  // Fan ON time (2 minutes)
+#define FAN_OFF_DURATION_MS      60000UL  // Fan OFF time (1 minute)
+
+#define TEMPERATURE_UNIT_LABEL   "celsius" // All temperature readings/setpoints are Celsius
+
+#define HEATER_ON_TEMP_C          50.0f   // Avg(temp1 + i2c_temp)/2 below this => heater ON
+#define HEATER_OFF_TEMP_C         55.0f   // Avg(temp1 + i2c_temp)/2 above this => heater OFF
+
+#define REFRIG_OFF_TEMP2_C        -4.0f   // temp2 below this => refrigerator OFF
+#define REFRIG_ON_TEMP2_C         -1.0f   // temp2 above this => refrigerator ON
+
+// ----- LED PWM FADE SETTINGS -----
+#define LED_PWM_FREQUENCY_HZ      5000
+#define LED_PWM_RESOLUTION_BITS   8
+#define LED_BRIGHTNESS_MAX        255
+#define LED_FADE_STEP               5
+#define LED_FADE_INTERVAL_MS       20
+
 // ============================================================
 // FIREBASE REALTIME DATABASE
 // ============================================================

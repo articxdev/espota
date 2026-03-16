@@ -68,6 +68,26 @@ bool heaterOn = false;
 bool refrigOn = false;
 bool fanOn    = false;
 
+// Fan cycle state (2 min ON / 1 min OFF)
+unsigned long fanCycleStartMillis = 0;
+bool fanCycleOnPhase = true;
+
+// LED PWM channels
+const uint8_t LED_CHANNEL_HEATER = 0;
+const uint8_t LED_CHANNEL_REFRIG = 1;
+const uint8_t LED_CHANNEL_FAN    = 2;
+
+// LED fade state
+uint8_t heaterLedCurrent = 0;
+uint8_t refrigLedCurrent = 0;
+uint8_t fanLedCurrent    = 0;
+
+uint8_t heaterLedTarget = 0;
+uint8_t refrigLedTarget = 0;
+uint8_t fanLedTarget    = 0;
+
+unsigned long lastLedFadeUpdate = 0;
+
 // ============================================================
 // FUNCTION DECLARATIONS
 // ============================================================
@@ -77,7 +97,15 @@ void initializeFirebase();
 void initializeWiFi();
 void setupWiFiCallbacks();
 void readSensors();
+void updateAutomaticControl();
+void updateFanCycle();
 void applyRelayStates();
+void updateLedFade();
+void updateLedChannelFade(uint8_t channel, uint8_t &currentValue, uint8_t targetValue);
+void writeLedChannel(uint8_t channel, uint8_t duty);
+void setAllLedsImmediate(uint8_t duty);
+bool isValidDs18b20(float value);
+bool isValidAmbientTemp(float value);
 void pushToFirebase();
 void readRelayCommandsFromFirebase();
 void checkForUpdates();
@@ -119,6 +147,12 @@ void setup() {
     lastFirebaseUpdate = millis();
     lastSensorRead    = millis();
 
+    // Start fan cycle in ON phase
+    fanCycleStartMillis = millis();
+    fanCycleOnPhase = true;
+    fanOn = true;
+    applyRelayStates();
+
     Serial.println("[OK] Setup complete - entering main loop");
     Serial.println("================================\n");
 }
@@ -128,6 +162,7 @@ void setup() {
 // ============================================================
 void loop() {
     wifiManager.process();
+    updateLedFade();
 
     // ----- WiFi watchdog: reconnect every 5 s if lost ------
     static unsigned long lastWiFiCheck = 0;
@@ -147,14 +182,14 @@ void loop() {
     if (millis() - lastSensorRead > 2000) {
         lastSensorRead = millis();
         readSensors();
+        updateAutomaticControl();
         applyRelayStates();
     }
 
-    // ----- Firebase: push sensor data & read commands ------
+    // ----- Firebase: push sensor data -----------------------
     if (WiFi.status() == WL_CONNECTED && firebaseReady) {
         if (millis() - lastFirebaseUpdate > FIREBASE_UPDATE_INTERVAL_MS) {
             lastFirebaseUpdate = millis();
-            readRelayCommandsFromFirebase();
             pushToFirebase();
         }
     }
@@ -178,10 +213,16 @@ void initializePins() {
     pinMode(PIN_RELAY_REFRIG, OUTPUT); digitalWrite(PIN_RELAY_REFRIG, LOW);
     pinMode(PIN_RELAY_FAN,    OUTPUT); digitalWrite(PIN_RELAY_FAN,    LOW);
 
-    // Status LEDs
-    pinMode(PIN_LED_HEATER, OUTPUT); digitalWrite(PIN_LED_HEATER, LOW);
-    pinMode(PIN_LED_REFRIG, OUTPUT); digitalWrite(PIN_LED_REFRIG, LOW);
-    pinMode(PIN_LED_FAN,    OUTPUT); digitalWrite(PIN_LED_FAN,    LOW);
+    // Status LEDs (PWM fade)
+    ledcSetup(LED_CHANNEL_HEATER, LED_PWM_FREQUENCY_HZ, LED_PWM_RESOLUTION_BITS);
+    ledcSetup(LED_CHANNEL_REFRIG, LED_PWM_FREQUENCY_HZ, LED_PWM_RESOLUTION_BITS);
+    ledcSetup(LED_CHANNEL_FAN,    LED_PWM_FREQUENCY_HZ, LED_PWM_RESOLUTION_BITS);
+
+    ledcAttachPin(PIN_LED_HEATER, LED_CHANNEL_HEATER);
+    ledcAttachPin(PIN_LED_REFRIG, LED_CHANNEL_REFRIG);
+    ledcAttachPin(PIN_LED_FAN,    LED_CHANNEL_FAN);
+
+    setAllLedsImmediate(0);
 
     Serial.println("[OK] GPIO initialized:");
     Serial.println("     Relay  Heater  -> PIN " + String(PIN_RELAY_HEATER));
@@ -285,6 +326,68 @@ void readSensors() {
 }
 
 // ============================================================
+// AUTOMATIC CONTROL LOGIC
+// ============================================================
+bool isValidDs18b20(float value) {
+    return (value > -126.0f && value < 85.0f);
+}
+
+bool isValidAmbientTemp(float value) {
+    return (value > -40.0f && value < 125.0f);
+}
+
+void updateFanCycle() {
+    const unsigned long now = millis();
+    const unsigned long phaseDuration = fanCycleOnPhase ? FAN_ON_DURATION_MS : FAN_OFF_DURATION_MS;
+
+    if (now - fanCycleStartMillis >= phaseDuration) {
+        fanCycleOnPhase = !fanCycleOnPhase;
+        fanCycleStartMillis = now;
+
+        Serial.println("[CTRL] Fan cycle phase -> " + String(fanCycleOnPhase ? "ON (2 min)" : "OFF (1 min)"));
+    }
+
+    fanOn = fanCycleOnPhase;
+}
+
+void updateAutomaticControl() {
+    updateFanCycle();
+
+    const bool temp1Valid = isValidDs18b20(temp1);
+    const bool ambientValid = isValidAmbientTemp(ambientTemp);
+    if (temp1Valid && ambientValid) {
+        const float avgTemp = (temp1 + ambientTemp) / 2.0f;
+
+        if (avgTemp > HEATER_OFF_TEMP_C) {
+            heaterOn = false;
+        } else if (avgTemp < HEATER_ON_TEMP_C) {
+            heaterOn = true;
+        }
+
+        Serial.println("[CTRL] Heater avg(temp1+i2c)/2 = " + String(avgTemp, 2) +
+                       "°C (ON<" + String(HEATER_ON_TEMP_C, 1) +
+                       ", OFF>" + String(HEATER_OFF_TEMP_C, 1) + ")");
+    } else {
+        Serial.println("[CTRL] Heater control skipped (invalid temp1 or i2c temp)");
+    }
+
+    const bool temp2Valid = isValidDs18b20(temp2);
+    if (temp2Valid) {
+        if (temp2 < REFRIG_OFF_TEMP2_C) {
+            refrigOn = false;
+        } else if (temp2 > REFRIG_ON_TEMP2_C) {
+            refrigOn = true;
+        }
+
+        Serial.println("[CTRL] Refrig control temp2 = " + String(temp2, 2) +
+                       "°C (OFF<" + String(REFRIG_OFF_TEMP2_C, 1) +
+                       ", ON>" + String(REFRIG_ON_TEMP2_C, 1) + ")");
+    } else {
+        Serial.println("[CTRL] Refrig control skipped (invalid temp2)");
+    }
+}
+
+// ============================================================
 // RELAY & LED CONTROL
 // ============================================================
 void applyRelayStates() {
@@ -293,14 +396,56 @@ void applyRelayStates() {
     digitalWrite(PIN_RELAY_REFRIG, refrigOn ? HIGH : LOW);
     digitalWrite(PIN_RELAY_FAN,    fanOn    ? HIGH : LOW);
 
-    // Mirror relay state to status LEDs
-    digitalWrite(PIN_LED_HEATER, heaterOn ? HIGH : LOW);
-    digitalWrite(PIN_LED_REFRIG, refrigOn ? HIGH : LOW);
-    digitalWrite(PIN_LED_FAN,    fanOn    ? HIGH : LOW);
+    // Set LED targets (smooth fade handled in updateLedFade)
+    heaterLedTarget = heaterOn ? LED_BRIGHTNESS_MAX : 0;
+    refrigLedTarget = refrigOn ? LED_BRIGHTNESS_MAX : 0;
+    fanLedTarget    = fanOn    ? LED_BRIGHTNESS_MAX : 0;
 
     Serial.println("[RELAY] Heater:" + String(heaterOn ? "ON ":"OFF") +
                    "  Refrig:" + String(refrigOn ? "ON ":"OFF") +
                    "  Fan:"    + String(fanOn    ? "ON ":"OFF"));
+}
+
+void writeLedChannel(uint8_t channel, uint8_t duty) {
+    ledcWrite(channel, duty);
+}
+
+void updateLedChannelFade(uint8_t channel, uint8_t &currentValue, uint8_t targetValue) {
+    if (currentValue < targetValue) {
+        int nextValue = currentValue + LED_FADE_STEP;
+        if (nextValue > targetValue) nextValue = targetValue;
+        currentValue = (uint8_t)nextValue;
+        writeLedChannel(channel, currentValue);
+    } else if (currentValue > targetValue) {
+        int nextValue = currentValue - LED_FADE_STEP;
+        if (nextValue < targetValue) nextValue = targetValue;
+        currentValue = (uint8_t)nextValue;
+        writeLedChannel(channel, currentValue);
+    }
+}
+
+void updateLedFade() {
+    const unsigned long now = millis();
+    if (now - lastLedFadeUpdate < LED_FADE_INTERVAL_MS) return;
+
+    lastLedFadeUpdate = now;
+    updateLedChannelFade(LED_CHANNEL_HEATER, heaterLedCurrent, heaterLedTarget);
+    updateLedChannelFade(LED_CHANNEL_REFRIG, refrigLedCurrent, refrigLedTarget);
+    updateLedChannelFade(LED_CHANNEL_FAN,    fanLedCurrent,    fanLedTarget);
+}
+
+void setAllLedsImmediate(uint8_t duty) {
+    heaterLedCurrent = duty;
+    refrigLedCurrent = duty;
+    fanLedCurrent    = duty;
+
+    heaterLedTarget = duty;
+    refrigLedTarget = duty;
+    fanLedTarget    = duty;
+
+    writeLedChannel(LED_CHANNEL_HEATER, duty);
+    writeLedChannel(LED_CHANNEL_REFRIG, duty);
+    writeLedChannel(LED_CHANNEL_FAN,    duty);
 }
 
 // ============================================================
@@ -321,6 +466,9 @@ void pushToFirebase() {
     bool temp2Valid = (temp2 > -126.0f && temp2 < 85.0f);
     bool ambientValid = (ambientTemp > -40.0f && ambientTemp < 125.0f);
     bool anySensorValid = temp1Valid || temp2Valid || ambientValid;
+
+    // Explicit unit marker for all temperature readings
+    ok &= Firebase.RTDB.setString(&fbdo, base + "/sensors/temperature_unit", TEMPERATURE_UNIT_LABEL);
 
     // Sensor data (only push valid readings)
     if (temp1Valid) {
@@ -432,9 +580,10 @@ void setupWiFiCallbacks() {
         Serial.println("[*] Provisioning portal active: " + wm->getConfigPortalSSID());
         // Fast-blink the fan LED to indicate provisioning mode
         for (int i = 0; i < 6; i++) {
-            digitalWrite(PIN_LED_FAN, HIGH); delay(150);
-            digitalWrite(PIN_LED_FAN, LOW);  delay(150);
+            writeLedChannel(LED_CHANNEL_FAN, LED_BRIGHTNESS_MAX); delay(150);
+            writeLedChannel(LED_CHANNEL_FAN, 0);                  delay(150);
         }
+        writeLedChannel(LED_CHANNEL_FAN, fanLedCurrent);
     });
 }
 
@@ -566,13 +715,9 @@ void performOTAUpdate(String firmwareUrl, String expectedSha256) {
     if (Update.end() && Update.isFinished()) {
         // Signal all LEDs before reboot
         for (int i = 0; i < 5; i++) {
-            digitalWrite(PIN_LED_HEATER, HIGH);
-            digitalWrite(PIN_LED_REFRIG, HIGH);
-            digitalWrite(PIN_LED_FAN,    HIGH);
+            setAllLedsImmediate(LED_BRIGHTNESS_MAX);
             delay(100);
-            digitalWrite(PIN_LED_HEATER, LOW);
-            digitalWrite(PIN_LED_REFRIG, LOW);
-            digitalWrite(PIN_LED_FAN,    LOW);
+            setAllLedsImmediate(0);
             delay(100);
         }
         Serial.println("[OK] OTA complete - restarting...");
