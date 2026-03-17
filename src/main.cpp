@@ -52,6 +52,7 @@ bool        provisioningMode = false;
 unsigned long lastOTACheck      = 0;
 unsigned long lastFirebaseUpdate = 0;
 unsigned long lastSensorRead    = 0;
+unsigned long bootStartMillis   = 0;
 
 // ============================================================
 // SENSOR READINGS
@@ -96,6 +97,10 @@ void initializeSensors();
 void initializeFirebase();
 void initializeWiFi();
 void setupWiFiCallbacks();
+bool hasValidAPPassword();
+bool startProvisioningPortal();
+bool shouldHoldRelaysOff();
+void enforceRelaysOff();
 void readSensors();
 void updateAutomaticControl();
 void updateFanCycle();
@@ -118,6 +123,7 @@ void setup() {
     delay(1000);
     Serial.begin(SERIAL_BAUD_RATE);
     delay(500);
+    bootStartMillis = millis();
 
     Serial.println("\n\n================================");
     Serial.println("ESP32 TEMP CONTROL v" FIRMWARE_VERSION);
@@ -150,8 +156,7 @@ void setup() {
     // Start fan cycle in ON phase
     fanCycleStartMillis = millis();
     fanCycleOnPhase = true;
-    fanOn = true;
-    applyRelayStates();
+    enforceRelaysOff();
 
     Serial.println("[OK] Setup complete - entering main loop");
     Serial.println("================================\n");
@@ -169,11 +174,23 @@ void loop() {
     if (millis() - lastWiFiCheck > 5000) {
         lastWiFiCheck = millis();
         if (WiFi.status() != WL_CONNECTED && !provisioningMode) {
-            Serial.println("[!] WiFi lost - reconnecting...");
-            wifiManager.autoConnect(AP_SSID, AP_PASSWORD);
-            if (WiFi.status() == WL_CONNECTED) {
+            Serial.println("[!] WiFi lost - attempting reconnect...");
+
+            bool reconnected = false;
+            if (hasValidAPPassword()) {
+                reconnected = wifiManager.autoConnect(AP_SSID, AP_PASSWORD);
+            } else {
+                reconnected = wifiManager.autoConnect(AP_SSID);
+            }
+
+            if (reconnected && WiFi.status() == WL_CONNECTED) {
                 Serial.println("[OK] WiFi reconnected: " + WiFi.localIP().toString());
                 if (!firebaseReady) initializeFirebase();
+            } else {
+                Serial.println("[!] Saved WiFi unavailable - starting visible provisioning hotspot");
+                if (startProvisioningPortal() && !firebaseReady) {
+                    initializeFirebase();
+                }
             }
         }
     }
@@ -182,8 +199,13 @@ void loop() {
     if (millis() - lastSensorRead > 2000) {
         lastSensorRead = millis();
         readSensors();
-        updateAutomaticControl();
-        applyRelayStates();
+
+        if (shouldHoldRelaysOff()) {
+            enforceRelaysOff();
+        } else {
+            updateAutomaticControl();
+            applyRelayStates();
+        }
     }
 
     // ----- Firebase: push sensor data -----------------------
@@ -334,6 +356,19 @@ bool isValidDs18b20(float value) {
 
 bool isValidAmbientTemp(float value) {
     return (value > -40.0f && value < 125.0f);
+}
+
+bool shouldHoldRelaysOff() {
+    const bool startupHoldActive = (millis() - bootStartMillis) < RELAY_STARTUP_HOLDOFF_MS;
+    const bool provisioningHoldActive = RELAYS_OFF_DURING_PROVISIONING && provisioningMode;
+    return startupHoldActive || provisioningHoldActive;
+}
+
+void enforceRelaysOff() {
+    heaterOn = false;
+    refrigOn = false;
+    fanOn = false;
+    applyRelayStates();
 }
 
 void updateFanCycle() {
@@ -542,19 +577,46 @@ void readRelayCommandsFromFirebase() {
 // ============================================================
 // WiFi INITIALIZATION & PROVISIONING
 // ============================================================
+bool hasValidAPPassword() {
+    const size_t apPasswordLength = strlen(AP_PASSWORD);
+    return (apPasswordLength >= 8 && apPasswordLength <= 63);
+}
+
+bool startProvisioningPortal() {
+    provisioningMode = true;
+
+    Serial.println("[*] Starting provisioning portal...");
+    Serial.println("[*] Connect to hotspot: " AP_SSID);
+    Serial.println("[*] Open: http://192.168.4.1");
+
+    bool connected = false;
+    if (hasValidAPPassword()) {
+        connected = wifiManager.startConfigPortal(AP_SSID, AP_PASSWORD);
+    } else {
+        Serial.println("[!] AP_PASSWORD length invalid for WPA2 AP - starting open hotspot");
+        connected = wifiManager.startConfigPortal(AP_SSID);
+    }
+
+    provisioningMode = false;
+    return connected && WiFi.status() == WL_CONNECTED;
+}
+
 void initializeWiFi() {
     wifiManager.setConfigPortalTimeout(WIFI_PORTAL_TIMEOUT);
     wifiManager.setConnectTimeout(WIFI_TIMEOUT);
-    wifiManager.setEnableConfigPortal(true);
+    wifiManager.setConnectRetries(1);
+    wifiManager.setWiFiAutoReconnect(true);
+    wifiManager.setWiFiAPHidden(AP_HIDDEN);
+    wifiManager.setEnableConfigPortal(false); // Manual fallback to portal for predictable failover timing
     setupWiFiCallbacks();
 
     Serial.println("[*] Attempting to reconnect to last known WiFi...");
 
     bool connected = false;
-    for (int i = 0; i < 3 && !connected; i++) {
-        Serial.println("[*] Connection attempt " + String(i + 1) + " of 3");
+    if (hasValidAPPassword()) {
         connected = wifiManager.autoConnect(AP_SSID, AP_PASSWORD);
-        if (!connected && i < 2) { Serial.println("[!] Retrying in 5 s..."); delay(5000); }
+    } else {
+        connected = wifiManager.autoConnect(AP_SSID);
     }
 
     if (connected) {
@@ -564,10 +626,10 @@ void initializeWiFi() {
         Serial.println("[OK] IP:   "   + WiFi.localIP().toString());
         Serial.println("[OK] RSSI: "   + String(WiFi.RSSI()) + " dBm");
     } else {
-        provisioningMode = true;
-        Serial.println("[!] Connected failed - portal started");
-        Serial.println("[*] Connect to hotspot: " AP_SSID);
-        Serial.println("[*] Open: http://192.168.4.1");
+        Serial.println("[!] Saved WiFi unavailable - switching to provisioning hotspot");
+        if (!startProvisioningPortal()) {
+            Serial.println("[!] Provisioning portal closed without WiFi connection");
+        }
     }
 }
 
@@ -577,6 +639,7 @@ void setupWiFiCallbacks() {
         provisioningMode = false;
     });
     wifiManager.setAPCallback([](WiFiManager *wm) {
+        provisioningMode = true;
         Serial.println("[*] Provisioning portal active: " + wm->getConfigPortalSSID());
         // Fast-blink the fan LED to indicate provisioning mode
         for (int i = 0; i < 6; i++) {

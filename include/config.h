@@ -9,20 +9,20 @@
 // ============================================================
 
 // Firmware Version
-#define FIRMWARE_VERSION "1.2.3"
+#define FIRMWARE_VERSION "1.2.5"
 #define FIRMWARE_AUTHOR "ESP32 Project"
 
 // ============================================================
 // WiFi PROVISIONING SETTINGS
 // ============================================================
 
-// AP Settings for first-time setup (hidden SSID)
+// AP settings for first-time setup hotspot
 #define AP_SSID    "ESP32"   // Hotspot SSID for provisioning portal
 // AP_PASSWORD is defined in secrets.h
 #define AP_HIDDEN  false     // Hide the setup hotspot
 
 // WiFiManager settings
-#define WIFI_TIMEOUT 180                 // Timeout in seconds for WiFi setup
+#define WIFI_TIMEOUT 15                  // Timeout in seconds for saved WiFi connect attempt
 #define WIFI_AUTOCONNECT true           // Auto-connect to stored WiFi
 #define WIFI_PORTAL_TIMEOUT 300         // Portal timeout in seconds (5 mins)
 
@@ -97,6 +97,10 @@
 
 #define REFRIG_OFF_TEMP2_C        -4.0f   // temp2 below this => refrigerator OFF
 #define REFRIG_ON_TEMP2_C         -1.0f   // temp2 above this => refrigerator ON
+
+// Keep relay outputs OFF during startup/provisioning to improve boot/AP stability
+#define RELAY_STARTUP_HOLDOFF_MS   30000UL // 30 seconds after boot
+#define RELAYS_OFF_DURING_PROVISIONING true
 
 // ----- LED PWM FADE SETTINGS -----
 #define LED_PWM_FREQUENCY_HZ      5000
