@@ -191,6 +191,20 @@ espota/
    platformio device monitor -b 115200
    ```
 
+### Wireless Serial Monitor (Telnet)
+
+Once the ESP32 is connected to WiFi, it also mirrors the same logs to a **Telnet** server on port **23**.
+
+It also works when the device is in **provisioning hotspot (AP) mode** — in that case you can connect to `192.168.4.1`.
+
+- Find the ESP32 IP address (shown in the USB serial logs as `IP: ...`, or from your router DHCP list).
+- Connect from your PC:
+   - **PuTTY (recommended):** Connection type **Telnet**, Hostname = ESP32 IP, Port = `23`
+   - **Windows built-in telnet:** enable “Telnet Client” Windows feature, then run:
+      ```bash
+      telnet <ESP32_IP> 23
+      ```
+
 6. **First time setup - WiFi Provisioning:**
    
    a. Device will boot and search for saved WiFi

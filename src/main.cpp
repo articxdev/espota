@@ -4,6 +4,7 @@
 // ============================================================
 
 #include <Arduino.h>
+#include <WiFi.h>
 #include <WiFiManager.h>
 #include <HTTPClient.h>
 #include <Update.h>
@@ -17,6 +18,50 @@
 #include "addons/RTDBHelper.h"    // Firebase RTDB utility
 #include <time.h>                 // NTP time sync
 #include "config.h"
+
+// ============================================================
+// WIRELESS SERIAL MONITOR (TELNET)
+// - Mirrors Serial logs to a TCP client on port 23
+// - Single client at a time
+// ============================================================
+static const uint16_t TELNET_LOG_PORT = 23;
+WiFiServer telnetServer(TELNET_LOG_PORT);
+WiFiClient telnetClient;
+bool telnetServerStarted = false;
+
+class WiFiSerialLogger : public Print {
+public:
+    WiFiSerialLogger() = default;
+
+    void attachSerial(HardwareSerial *serial) { serial_ = serial; }
+    void setClient(WiFiClient *client) { client_ = client; }
+
+    size_t write(uint8_t b) override {
+        if (serial_) {
+            serial_->write(b);
+        }
+        if (client_ && client_->connected()) {
+            client_->write(b);
+        }
+        return 1;
+    }
+
+    size_t write(const uint8_t *buffer, size_t size) override {
+        if (serial_) {
+            serial_->write(buffer, size);
+        }
+        if (client_ && client_->connected()) {
+            client_->write(buffer, size);
+        }
+        return size;
+    }
+
+private:
+    HardwareSerial *serial_ = nullptr;
+    WiFiClient *client_ = nullptr;
+};
+
+WiFiSerialLogger Log;
 
 // NTP Configuration
 #define NTP_SERVER      "pool.ntp.org"
@@ -99,6 +144,7 @@ void initializeWiFi();
 void setupWiFiCallbacks();
 bool hasValidAPPassword();
 bool startProvisioningPortal();
+void handleTelnetLogger();
 bool shouldHoldRelaysOff();
 void enforceRelaysOff();
 void readSensors();
@@ -109,6 +155,7 @@ void updateLedFade();
 void updateLedChannelFade(uint8_t channel, uint8_t &currentValue, uint8_t targetValue);
 void writeLedChannel(uint8_t channel, uint8_t duty);
 void setAllLedsImmediate(uint8_t duty);
+void writeRelay(uint8_t pin, bool on, bool activeLow);
 bool isValidDs18b20(float value);
 bool isValidAmbientTemp(float value);
 void pushToFirebase();
@@ -125,26 +172,29 @@ void setup() {
     delay(500);
     bootStartMillis = millis();
 
-    Serial.println("\n\n================================");
-    Serial.println("ESP32 TEMP CONTROL v" FIRMWARE_VERSION);
-    Serial.println("Author: " FIRMWARE_AUTHOR);
-    Serial.println("================================\n");
+    Log.attachSerial(&Serial);
+    Log.setClient(&telnetClient);
+
+    Log.println("\n\n================================");
+    Log.println("ESP32 TEMP CONTROL v" FIRMWARE_VERSION);
+    Log.println("Author: " FIRMWARE_AUTHOR);
+    Log.println("================================\n");
 
     initializePins();
     initializeSensors();
 
-    Serial.println("[*] Initializing WiFi provisioning...");
+    Log.println("[*] Initializing WiFi provisioning...");
     initializeWiFi();
 
     if (WiFi.status() == WL_CONNECTED) {
         // Sync time via NTP (needed for timestamps)
         configTime(GMT_OFFSET_SEC, DAYLIGHT_OFFSET, NTP_SERVER);
-        Serial.println("[*] Syncing time with NTP...");
+        Log.println("[*] Syncing time with NTP...");
         struct tm timeinfo;
         if (getLocalTime(&timeinfo, 5000)) {
-            Serial.println("[OK] Time synced: " + String(asctime(&timeinfo)));
+            Log.println("[OK] Time synced: " + String(asctime(&timeinfo)));
         } else {
-            Serial.println("[!] NTP sync failed - timestamps may be inaccurate");
+            Log.println("[!] NTP sync failed - timestamps may be inaccurate");
         }
         initializeFirebase();
     }
@@ -158,8 +208,8 @@ void setup() {
     fanCycleOnPhase = true;
     enforceRelaysOff();
 
-    Serial.println("[OK] Setup complete - entering main loop");
-    Serial.println("================================\n");
+    Log.println("[OK] Setup complete - entering main loop");
+    Log.println("================================\n");
 }
 
 // ============================================================
@@ -167,6 +217,7 @@ void setup() {
 // ============================================================
 void loop() {
     wifiManager.process();
+    handleTelnetLogger();
     updateLedFade();
 
     // ----- WiFi watchdog: reconnect every 5 s if lost ------
@@ -174,7 +225,7 @@ void loop() {
     if (millis() - lastWiFiCheck > 5000) {
         lastWiFiCheck = millis();
         if (WiFi.status() != WL_CONNECTED && !provisioningMode) {
-            Serial.println("[!] WiFi lost - attempting reconnect...");
+            Log.println("[!] WiFi lost - attempting reconnect...");
 
             bool reconnected = false;
             if (hasValidAPPassword()) {
@@ -184,10 +235,10 @@ void loop() {
             }
 
             if (reconnected && WiFi.status() == WL_CONNECTED) {
-                Serial.println("[OK] WiFi reconnected: " + WiFi.localIP().toString());
+                Log.println("[OK] WiFi reconnected: " + WiFi.localIP().toString());
                 if (!firebaseReady) initializeFirebase();
             } else {
-                Serial.println("[!] Saved WiFi unavailable - starting visible provisioning hotspot");
+                Log.println("[!] Saved WiFi unavailable - starting visible provisioning hotspot");
                 if (startProvisioningPortal() && !firebaseReady) {
                     initializeFirebase();
                 }
@@ -220,20 +271,82 @@ void loop() {
     if (millis() - lastOTACheck > (OTA_CHECK_INTERVAL_SECONDS * 1000UL)) {
         lastOTACheck = millis();
         if (WiFi.status() == WL_CONNECTED) {
-            Serial.println("\n[*] Checking for firmware updates...");
+            Log.println("\n[*] Checking for firmware updates...");
             checkForUpdates();
         }
     }
 }
 
 // ============================================================
+// TELNET LOGGER
+// ============================================================
+void handleTelnetLogger() {
+    const bool staConnected = (WiFi.status() == WL_CONNECTED);
+    const bool apActive = ((WiFi.getMode() & WIFI_AP) != 0);
+    const bool anyNetworkUp = staConnected || apActive;
+
+    if (!anyNetworkUp) {
+        if (telnetClient && telnetClient.connected()) {
+            telnetClient.stop();
+        }
+        telnetServerStarted = false;
+        return;
+    }
+
+    if (!telnetServerStarted) {
+        telnetServer.begin();
+        telnetServer.setNoDelay(true);
+        telnetServerStarted = true;
+        Log.println("[TELNET] Log server started on port " + String(TELNET_LOG_PORT));
+    }
+
+#if defined(ARDUINO_ARCH_ESP32)
+    if (telnetServer.hasClient()) {
+        WiFiClient newClient = telnetServer.available();
+        if (newClient) {
+            if (telnetClient && telnetClient.connected()) {
+                telnetClient.stop();
+            }
+            telnetClient = newClient;
+            telnetClient.setNoDelay(true);
+            telnetClient.println("[TELNET] Connected to ESP32 log stream");
+            if (staConnected) {
+                telnetClient.println("[TELNET] STA IP: " + WiFi.localIP().toString());
+            }
+            if (apActive) {
+                telnetClient.println("[TELNET]  AP IP: " + WiFi.softAPIP().toString());
+            }
+        }
+    }
+#else
+    if (!telnetClient || !telnetClient.connected()) {
+        WiFiClient newClient = telnetServer.available();
+        if (newClient) {
+            telnetClient = newClient;
+        }
+    }
+#endif
+
+    if (telnetClient && telnetClient.connected()) {
+        // Drain any incoming bytes (we don't accept commands here)
+        while (telnetClient.available() > 0) {
+            (void)telnetClient.read();
+        }
+    }
+}
+
+// Redirect all Serial.print/println in the remainder of this file to Log (USB + telnet).
+// (Placed here to keep Serial.begin() and logger attachment clean in setup())
+#define Serial Log
+
+// ============================================================
 // PIN INITIALIZATION
 // ============================================================
 void initializePins() {
     // Relays
-    pinMode(PIN_RELAY_HEATER, OUTPUT); digitalWrite(PIN_RELAY_HEATER, LOW);
-    pinMode(PIN_RELAY_REFRIG, OUTPUT); digitalWrite(PIN_RELAY_REFRIG, LOW);
-    pinMode(PIN_RELAY_FAN,    OUTPUT); digitalWrite(PIN_RELAY_FAN,    LOW);
+    pinMode(PIN_RELAY_HEATER, OUTPUT); writeRelay(PIN_RELAY_HEATER, false, RELAY_HEATER_ACTIVE_LOW);
+    pinMode(PIN_RELAY_REFRIG, OUTPUT); writeRelay(PIN_RELAY_REFRIG, false, RELAY_REFRIG_ACTIVE_LOW);
+    pinMode(PIN_RELAY_FAN,    OUTPUT); writeRelay(PIN_RELAY_FAN,    false, RELAY_FAN_ACTIVE_LOW);
 
     // Status LEDs (PWM fade)
     ledcSetup(LED_CHANNEL_HEATER, LED_PWM_FREQUENCY_HZ, LED_PWM_RESOLUTION_BITS);
@@ -426,10 +539,10 @@ void updateAutomaticControl() {
 // RELAY & LED CONTROL
 // ============================================================
 void applyRelayStates() {
-    // Write relay outputs
-    digitalWrite(PIN_RELAY_HEATER, heaterOn ? HIGH : LOW);
-    digitalWrite(PIN_RELAY_REFRIG, refrigOn ? HIGH : LOW);
-    digitalWrite(PIN_RELAY_FAN,    fanOn    ? HIGH : LOW);
+    // Write relay outputs (supports active-low relay modules)
+    writeRelay(PIN_RELAY_HEATER, heaterOn, RELAY_HEATER_ACTIVE_LOW);
+    writeRelay(PIN_RELAY_REFRIG, refrigOn, RELAY_REFRIG_ACTIVE_LOW);
+    writeRelay(PIN_RELAY_FAN,    fanOn,    RELAY_FAN_ACTIVE_LOW);
 
     // Set LED targets (smooth fade handled in updateLedFade)
     heaterLedTarget = heaterOn ? LED_BRIGHTNESS_MAX : 0;
@@ -439,6 +552,11 @@ void applyRelayStates() {
     Serial.println("[RELAY] Heater:" + String(heaterOn ? "ON ":"OFF") +
                    "  Refrig:" + String(refrigOn ? "ON ":"OFF") +
                    "  Fan:"    + String(fanOn    ? "ON ":"OFF"));
+}
+
+void writeRelay(uint8_t pin, bool on, bool activeLow) {
+    const bool level = activeLow ? !on : on;
+    digitalWrite(pin, level ? HIGH : LOW);
 }
 
 void writeLedChannel(uint8_t channel, uint8_t duty) {

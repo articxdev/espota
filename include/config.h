@@ -70,16 +70,21 @@
 // ----- RELAY OUTPUTS (ACTIVE HIGH) -----
 #define PIN_RELAY_HEATER    19   // Relay for heater
 #define PIN_RELAY_REFRIG    23   // Relay for refrigeration
-#define PIN_RELAY_FAN       5    // Relay for fan
+#define PIN_RELAY_FAN       13    // Relay for fan
+
+// Many relay modules are ACTIVE-LOW (IN=LOW energizes relay). Set true if needed.
+#define RELAY_HEATER_ACTIVE_LOW  false
+#define RELAY_REFRIG_ACTIVE_LOW  false
+#define RELAY_FAN_ACTIVE_LOW     false
 
 // ----- STATUS LEDs -----
-#define PIN_LED_HEATER      2    // LED: heater active indicator
-#define PIN_LED_REFRIG      4    // LED: refrigeration active indicator
+#define PIN_LED_HEATER      33    // LED: heater active indicator
+#define PIN_LED_REFRIG      32   // LED: refrigeration active indicator
 #define PIN_LED_FAN         17   // LED: fan active indicator
 
 // ----- TEMPERATURE SENSORS (DS18B20 OneWire) -----
 #define PIN_TEMP_SENSOR1    27   // Temperature sensor 1 (OneWire)
-#define PIN_TEMP_SENSOR2    12   // Temperature sensor 2 (OneWire)
+#define PIN_TEMP_SENSOR2    14   // Temperature sensor 2 (OneWire)
 
 // ----- I2C BUS (Temp + Humidity sensor e.g. SHT31) -----
 #define PIN_I2C_SDA         21   // I2C SDA
@@ -92,11 +97,11 @@
 
 #define TEMPERATURE_UNIT_LABEL   "celsius" // All temperature readings/setpoints are Celsius
 
-#define HEATER_ON_TEMP_C          50.0f   // Avg(temp1 + i2c_temp)/2 below this => heater ON
-#define HEATER_OFF_TEMP_C         55.0f   // Avg(temp1 + i2c_temp)/2 above this => heater OFF
+#define HEATER_ON_TEMP_C          30.0f   // Avg(temp1 + i2c_temp)/2 below this => heater ON
+#define HEATER_OFF_TEMP_C         35.0f   // Avg(temp1 + i2c_temp)/2 above this => heater OFF
 
-#define REFRIG_OFF_TEMP2_C        -4.0f   // temp2 below this => refrigerator OFF
-#define REFRIG_ON_TEMP2_C         -1.0f   // temp2 above this => refrigerator ON
+#define REFRIG_OFF_TEMP2_C        0.0f   // temp2 below this => refrigerator OFF
+#define REFRIG_ON_TEMP2_C         2.0f   // temp2 above this => refrigerator ON
 
 // Keep relay outputs OFF during startup/provisioning to improve boot/AP stability
 #define RELAY_STARTUP_HOLDOFF_MS   30000UL // 30 seconds after boot
