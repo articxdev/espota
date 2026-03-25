@@ -9,7 +9,7 @@
 // ============================================================
 
 // Firmware Version
-#define FIRMWARE_VERSION "1.2.8"
+#define FIRMWARE_VERSION "1.2.9"
 #define FIRMWARE_AUTHOR "ESP32 Project"
 
 // ============================================================
@@ -81,7 +81,7 @@
 // true => relay command is inverted so physical output follows ON/OFF logic.
 #define HEATER_OUTPUT_INVERTED   true
 #define REFRIG_OUTPUT_INVERTED   true
-#define FAN_OUTPUT_INVERTED      true
+#define FAN_OUTPUT_INVERTED      false
 
 // ----- STATUS LEDs -----
 #define PIN_LED_HEATER      33    // LED: heater active indicator
