@@ -580,7 +580,16 @@ void applyRelayStates() {
 
 void writeRelay(uint8_t pin, bool on, bool activeLow) {
     const bool level = activeLow ? !on : on;
-    digitalWrite(pin, level ? HIGH : LOW);
+    
+    // SOFTWARE FIX FOR 5V ACTIVE-LOW RELAYS CONNECTED TO 3.3V ESP32
+    // A 3.3V "HIGH" is not enough to turn off the relay's 5V optocoupler. 
+    // Instead of forcing 3.3V, we set the pin to INPUT (High-Impedance) which safely stops the current.
+    if (activeLow && level == HIGH) {
+        pinMode(pin, INPUT);
+    } else {
+        pinMode(pin, OUTPUT);
+        digitalWrite(pin, level ? HIGH : LOW);
+    }
 }
 
 void writeLedChannel(uint8_t channel, uint8_t duty) {
