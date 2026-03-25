@@ -75,7 +75,11 @@
 // Many relay modules are ACTIVE-LOW (IN=LOW energizes relay). Set true if needed.
 #define RELAY_HEATER_ACTIVE_LOW  false
 #define RELAY_REFRIG_ACTIVE_LOW  false
-#define RELAY_FAN_ACTIVE_LOW     false
+#define RELAY_FAN_ACTIVE_LOW     true
+
+// If fan power wiring behaves inverted (e.g., connected to NC contact), set true.
+// true  => relay command is inverted so fan follows ON/OFF cycle correctly.
+#define FAN_OUTPUT_INVERTED      true
 
 // ----- STATUS LEDs -----
 #define PIN_LED_HEATER      33    // LED: heater active indicator

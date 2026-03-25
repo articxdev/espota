@@ -542,7 +542,7 @@ void applyRelayStates() {
     // Write relay outputs (supports active-low relay modules)
     writeRelay(PIN_RELAY_HEATER, heaterOn, RELAY_HEATER_ACTIVE_LOW);
     writeRelay(PIN_RELAY_REFRIG, refrigOn, RELAY_REFRIG_ACTIVE_LOW);
-    writeRelay(PIN_RELAY_FAN,    fanOn,    RELAY_FAN_ACTIVE_LOW);
+    writeRelay(PIN_RELAY_FAN,    FAN_OUTPUT_INVERTED ? !fanOn : fanOn, RELAY_FAN_ACTIVE_LOW);
 
     // Set LED targets (smooth fade handled in updateLedFade)
     heaterLedTarget = heaterOn ? LED_BRIGHTNESS_MAX : 0;
