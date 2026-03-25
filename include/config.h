@@ -9,7 +9,7 @@
 // ============================================================
 
 // Firmware Version
-#define FIRMWARE_VERSION "1.2.7"
+#define FIRMWARE_VERSION "1.2.8"
 #define FIRMWARE_AUTHOR "ESP32 Project"
 
 // ============================================================
@@ -127,6 +127,10 @@
 #define FIREBASE_DEVICE_ID  "esp32_001"
 #define FIREBASE_BASE_PATH  "/devices/" FIREBASE_DEVICE_ID
 #define FIREBASE_UPDATE_INTERVAL_MS  5000  // Push data every 5 seconds
+
+// Remote relay control polling
+#define RELAY_CONTROL_PULL_INTERVAL_MS  1000
+#define RELAY_CONTROL_DEFAULT_AUTO_MODE true
 
 // ============================================================
 // SYSTEM SETTINGS

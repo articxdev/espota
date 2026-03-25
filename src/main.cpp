@@ -98,6 +98,7 @@ unsigned long lastOTACheck      = 0;
 unsigned long lastFirebaseUpdate = 0;
 unsigned long lastSensorRead    = 0;
 unsigned long bootStartMillis   = 0;
+unsigned long lastRelayControlRead = 0;
 
 // ============================================================
 // SENSOR READINGS
@@ -113,6 +114,7 @@ float ambientHumidity = 0.0f;      // SHT30 humidity
 bool heaterOn = false;
 bool refrigOn = false;
 bool fanOn    = false;
+bool autoRelayControl = RELAY_CONTROL_DEFAULT_AUTO_MODE;
 
 // Fan cycle state (2 min ON / 1 min OFF)
 unsigned long fanCycleStartMillis = 0;
@@ -159,6 +161,7 @@ void writeRelay(uint8_t pin, bool on, bool activeLow);
 bool isValidDs18b20(float value);
 bool isValidAmbientTemp(float value);
 void pushToFirebase();
+void updateRelayControlModeFromFirebase();
 void readRelayCommandsFromFirebase();
 void checkForUpdates();
 void performOTAUpdate(String firmwareUrl, String expectedSha256);
@@ -202,6 +205,7 @@ void setup() {
     lastOTACheck      = millis();
     lastFirebaseUpdate = millis();
     lastSensorRead    = millis();
+    lastRelayControlRead = millis();
 
     // Start fan cycle in ON phase
     fanCycleStartMillis = millis();
@@ -254,7 +258,18 @@ void loop() {
         if (shouldHoldRelaysOff()) {
             enforceRelaysOff();
         } else {
-            updateAutomaticControl();
+            const bool canReadRemoteControl = (WiFi.status() == WL_CONNECTED && firebaseReady);
+            if (canReadRemoteControl && (millis() - lastRelayControlRead >= RELAY_CONTROL_PULL_INTERVAL_MS)) {
+                lastRelayControlRead = millis();
+                updateRelayControlModeFromFirebase();
+                if (!autoRelayControl) {
+                    readRelayCommandsFromFirebase();
+                }
+            }
+
+            if (autoRelayControl) {
+                updateAutomaticControl();
+            }
             applyRelayStates();
         }
     }
@@ -425,6 +440,15 @@ void initializeFirebase() {
         Firebase.RTDB.setString(&fbdo, base + "/status/firmware", FIRMWARE_VERSION);
         Firebase.RTDB.setInt(&fbdo, base + "/status/last_seen", getEpochTime());
         Firebase.RTDB.setInt(&fbdo, base + "/status/heartbeat_interval_s", FIREBASE_UPDATE_INTERVAL_MS / 1000);
+
+        bool remoteAutoMode = RELAY_CONTROL_DEFAULT_AUTO_MODE;
+        const String modePath = base + "/relays/auto_mode";
+        if (Firebase.RTDB.getBool(&fbdo, modePath, &remoteAutoMode)) {
+            autoRelayControl = remoteAutoMode;
+        } else {
+            autoRelayControl = RELAY_CONTROL_DEFAULT_AUTO_MODE;
+            Firebase.RTDB.setBool(&fbdo, modePath, autoRelayControl);
+        }
         
         // NOTE: For automatic offline detection, your app should check:
         // if (current_time - last_seen > heartbeat_interval_s * 2) then device is OFFLINE
@@ -652,6 +676,7 @@ void pushToFirebase() {
     ok &= Firebase.RTDB.setBool(&fbdo, base + "/relays/heater_state", heaterOn);
     ok &= Firebase.RTDB.setBool(&fbdo, base + "/relays/refrig_state", refrigOn);
     ok &= Firebase.RTDB.setBool(&fbdo, base + "/relays/fan_state",    fanOn);
+    ok &= Firebase.RTDB.setBool(&fbdo, base + "/relays/auto_mode_state", autoRelayControl);
 
     // Device diagnostics with timestamp
     ok &= Firebase.RTDB.setString(&fbdo, base + "/status/state", "online");
@@ -664,6 +689,27 @@ void pushToFirebase() {
         Serial.println("[FB] Data pushed (sensors valid: " + String(anySensorValid ? "yes" : "no") + ")");
     } else {
         Serial.println("[FB] Push error: " + fbdo.errorReason());
+    }
+}
+
+// ============================================================
+// READ RELAY CONTROL MODE FROM FIREBASE
+// ============================================================
+void updateRelayControlModeFromFirebase() {
+    if (!Firebase.ready()) return;
+
+    const String modePath = String(FIREBASE_BASE_PATH) + "/relays/auto_mode";
+    bool remoteAutoMode = autoRelayControl;
+
+    if (Firebase.RTDB.getBool(&fbdo, modePath, &remoteAutoMode)) {
+        if (remoteAutoMode != autoRelayControl) {
+            autoRelayControl = remoteAutoMode;
+            if (autoRelayControl) {
+                fanCycleStartMillis = millis();
+                fanCycleOnPhase = true;
+            }
+            Serial.println("[FB] Relay mode -> " + String(autoRelayControl ? "AUTO" : "MANUAL"));
+        }
     }
 }
 
