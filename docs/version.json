@@ -1,10 +1,10 @@
 {
   "version": "1.2.6",
   "download_url": "https://github.com/articxdev/espota/releases/download/v1.2.6/firmware.bin",
-  "sha256": "dfbb3e3f0cbe51e05836edb16cb7e78abf00e75f96fe5630caeed8d9b457ea74",
+  "sha256": "d4c247416be044cde884f015563345ffa62c401c0464767553c9ea83cdcf5b39",
   "release_notes": "Release v1.2.6 - Automatic build",
   "min_version": "0.9.0",
   "force_update": false,
-  "timestamp": "2026-03-25T05:04:28Z",
+  "timestamp": "2026-03-25T12:25:53Z",
   "release_tag": "v1.2.6"
 }
