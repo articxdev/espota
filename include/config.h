@@ -9,7 +9,7 @@
 // ============================================================
 
 // Firmware Version
-#define FIRMWARE_VERSION "1.2.6"
+#define FIRMWARE_VERSION "1.2.7"
 #define FIRMWARE_AUTHOR "ESP32 Project"
 
 // ============================================================
@@ -73,12 +73,14 @@
 #define PIN_RELAY_FAN       13    // Relay for fan
 
 // Many relay modules are ACTIVE-LOW (IN=LOW energizes relay). Set true if needed.
-#define RELAY_HEATER_ACTIVE_LOW  false
-#define RELAY_REFRIG_ACTIVE_LOW  false
+#define RELAY_HEATER_ACTIVE_LOW  true
+#define RELAY_REFRIG_ACTIVE_LOW  true
 #define RELAY_FAN_ACTIVE_LOW     true
 
-// If fan power wiring behaves inverted (e.g., connected to NC contact), set true.
-// true  => relay command is inverted so fan follows ON/OFF cycle correctly.
+// If load wiring behaves inverted (e.g., connected to NC contact), set true.
+// true => relay command is inverted so physical output follows ON/OFF logic.
+#define HEATER_OUTPUT_INVERTED   true
+#define REFRIG_OUTPUT_INVERTED   true
 #define FAN_OUTPUT_INVERTED      true
 
 // ----- STATUS LEDs -----

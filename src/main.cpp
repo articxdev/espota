@@ -540,8 +540,8 @@ void updateAutomaticControl() {
 // ============================================================
 void applyRelayStates() {
     // Write relay outputs (supports active-low relay modules)
-    writeRelay(PIN_RELAY_HEATER, heaterOn, RELAY_HEATER_ACTIVE_LOW);
-    writeRelay(PIN_RELAY_REFRIG, refrigOn, RELAY_REFRIG_ACTIVE_LOW);
+    writeRelay(PIN_RELAY_HEATER, HEATER_OUTPUT_INVERTED ? !heaterOn : heaterOn, RELAY_HEATER_ACTIVE_LOW);
+    writeRelay(PIN_RELAY_REFRIG, REFRIG_OUTPUT_INVERTED ? !refrigOn : refrigOn, RELAY_REFRIG_ACTIVE_LOW);
     writeRelay(PIN_RELAY_FAN,    FAN_OUTPUT_INVERTED ? !fanOn : fanOn, RELAY_FAN_ACTIVE_LOW);
 
     // Set LED targets (smooth fade handled in updateLedFade)
