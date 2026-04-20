@@ -571,22 +571,7 @@ void applyRelayStates() {
 
 void writeRelay(uint8_t pin, bool on, bool activeLow) {
     const bool level = activeLow ? !on : on;
-    
-    if (activeLow) {
-        // OPEN-DRAIN SIMULATION: 3.3V ESP32 trying to turn off a 5V Active-Low relay.
-        // A standard 3.3V HIGH is not enough to stop the 5V current loop in the relay's optocoupler.
-        if (level == HIGH) {
-            // Turn relay OFF -> Disconnect pin (float) so no current flows to ground
-            pinMode(pin, INPUT);
-        } else {
-            // Turn relay ON -> Pull to ground
-            pinMode(pin, OUTPUT);
-            digitalWrite(pin, LOW);
-        }
-    } else {
-        pinMode(pin, OUTPUT);
-        digitalWrite(pin, level ? HIGH : LOW);
-    }
+    digitalWrite(pin, level ? HIGH : LOW);
 }
 
 void setAllLedsImmediate(bool on) {
