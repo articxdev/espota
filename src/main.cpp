@@ -136,6 +136,12 @@ uint8_t fanLedTarget    = 0;
 
 unsigned long lastLedFadeUpdate = 0;
 
+// Dynamic Setpoints
+float heaterOnTemp   = DEFAULT_HEATER_ON_TEMP_C;
+float heaterOffTemp  = DEFAULT_HEATER_OFF_TEMP_C;
+float refrigOnTemp   = DEFAULT_REFRIG_ON_TEMP2_C;
+float refrigOffTemp  = DEFAULT_REFRIG_OFF_TEMP2_C;
+
 // ============================================================
 // FUNCTION DECLARATIONS
 // ============================================================
@@ -454,6 +460,15 @@ void initializeFirebase() {
         // if (current_time - last_seen > heartbeat_interval_s * 2) then device is OFFLINE
         // Firebase ESP Client doesn't support onDisconnect like JS SDK
         
+        // Push fallback defaults to Firebase on first boot if they don't exist
+        float dummyTemp;
+        if (!Firebase.RTDB.getFloat(&fbdo, base + "/settings/heater_onTemp", &dummyTemp)) {
+            Firebase.RTDB.setFloat(&fbdo, base + "/settings/heater_onTemp", DEFAULT_HEATER_ON_TEMP_C);
+            Firebase.RTDB.setFloat(&fbdo, base + "/settings/heater_offTemp", DEFAULT_HEATER_OFF_TEMP_C);
+            Firebase.RTDB.setFloat(&fbdo, base + "/settings/refrig_onTemp", DEFAULT_REFRIG_ON_TEMP2_C);
+            Firebase.RTDB.setFloat(&fbdo, base + "/settings/refrig_offTemp", DEFAULT_REFRIG_OFF_TEMP2_C);
+        }
+
         Serial.println("[OK] Presence timestamps enabled - app should check last_seen");
     } else {
         Serial.println("[!] Firebase connection failed - will retry");
@@ -530,30 +545,30 @@ void updateAutomaticControl() {
     if (temp1Valid && ambientValid) {
         const float avgTemp = (temp1 + ambientTemp) / 2.0f;
 
-        if (avgTemp > HEATER_OFF_TEMP_C) {
+        if (avgTemp > heaterOffTemp) {
             heaterOn = false;
-        } else if (avgTemp < HEATER_ON_TEMP_C) {
+        } else if (avgTemp < heaterOnTemp) {
             heaterOn = true;
         }
 
         Serial.println("[CTRL] Heater avg(temp1+i2c)/2 = " + String(avgTemp, 2) +
-                       "°C (ON<" + String(HEATER_ON_TEMP_C, 1) +
-                       ", OFF>" + String(HEATER_OFF_TEMP_C, 1) + ")");
+                       "°C (ON<" + String(heaterOnTemp, 1) +
+                       ", OFF>" + String(heaterOffTemp, 1) + ")");
     } else {
         Serial.println("[CTRL] Heater control skipped (invalid temp1 or i2c temp)");
     }
 
     const bool temp2Valid = isValidDs18b20(temp2);
     if (temp2Valid) {
-        if (temp2 < REFRIG_OFF_TEMP2_C) {
+        if (temp2 < refrigOffTemp) {
             refrigOn = false;
-        } else if (temp2 > REFRIG_ON_TEMP2_C) {
+        } else if (temp2 > refrigOnTemp) {
             refrigOn = true;
         }
 
         Serial.println("[CTRL] Refrig control temp2 = " + String(temp2, 2) +
-                       "°C (OFF<" + String(REFRIG_OFF_TEMP2_C, 1) +
-                       ", ON>" + String(REFRIG_ON_TEMP2_C, 1) + ")");
+                       "°C (OFF<" + String(refrigOffTemp, 1) +
+                       ", ON>" + String(refrigOnTemp, 1) + ")");
     } else {
         Serial.println("[CTRL] Refrig control skipped (invalid temp2)");
     }
@@ -698,9 +713,11 @@ void pushToFirebase() {
 void updateRelayControlModeFromFirebase() {
     if (!Firebase.ready()) return;
 
-    const String modePath = String(FIREBASE_BASE_PATH) + "/relays/auto_mode";
+    const String basePath = String(FIREBASE_BASE_PATH);
+    const String modePath = basePath + "/relays/auto_mode";
+    
+    // Auto Mode Check
     bool remoteAutoMode = autoRelayControl;
-
     if (Firebase.RTDB.getBool(&fbdo, modePath, &remoteAutoMode)) {
         if (remoteAutoMode != autoRelayControl) {
             autoRelayControl = remoteAutoMode;
@@ -711,6 +728,13 @@ void updateRelayControlModeFromFirebase() {
             Serial.println("[FB] Relay mode -> " + String(autoRelayControl ? "AUTO" : "MANUAL"));
         }
     }
+    
+    // Setpoints Check
+    float t;
+    if (Firebase.RTDB.getFloat(&fbdo, basePath + "/settings/heater_onTemp", &t))  heaterOnTemp = t;
+    if (Firebase.RTDB.getFloat(&fbdo, basePath + "/settings/heater_offTemp", &t)) heaterOffTemp = t;
+    if (Firebase.RTDB.getFloat(&fbdo, basePath + "/settings/refrig_onTemp", &t))  refrigOnTemp = t;
+    if (Firebase.RTDB.getFloat(&fbdo, basePath + "/settings/refrig_offTemp", &t)) refrigOffTemp = t;
 }
 
 // ============================================================

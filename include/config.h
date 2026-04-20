@@ -9,7 +9,7 @@
 // ============================================================
 
 // Firmware Version
-#define FIRMWARE_VERSION "1.3.4"
+#define FIRMWARE_VERSION "1.4.0"
 #define FIRMWARE_AUTHOR "ESP32 Project"
 
 // ============================================================
@@ -103,11 +103,12 @@
 
 #define TEMPERATURE_UNIT_LABEL   "celsius" // All temperature readings/setpoints are Celsius
 
-#define HEATER_ON_TEMP_C          30.0f   // Avg(temp1 + i2c_temp)/2 below this => heater ON
-#define HEATER_OFF_TEMP_C         35.0f   // Avg(temp1 + i2c_temp)/2 above this => heater OFF
+// DEFAULT FALLBACK SETTINGS (Overridden by Firebase if available)
+#define DEFAULT_HEATER_ON_TEMP_C          30.0f
+#define DEFAULT_HEATER_OFF_TEMP_C         35.0f
 
-#define REFRIG_OFF_TEMP2_C        0.0f   // temp2 below this => refrigerator OFF
-#define REFRIG_ON_TEMP2_C         2.0f   // temp2 above this => refrigerator ON
+#define DEFAULT_REFRIG_OFF_TEMP2_C        0.0f
+#define DEFAULT_REFRIG_ON_TEMP2_C         2.0f
 
 // Keep relay outputs OFF during startup/provisioning to improve boot/AP stability
 #define RELAY_STARTUP_HOLDOFF_MS   30000UL // 30 seconds after boot
