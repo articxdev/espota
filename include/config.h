@@ -9,7 +9,7 @@
 // ============================================================
 
 // Firmware Version
-#define FIRMWARE_VERSION "1.5.5"
+#define FIRMWARE_VERSION "1.5.6"
 #define FIRMWARE_AUTHOR "ESP32 Project"
 
 // ============================================================
@@ -124,7 +124,7 @@
 
 // Remote relay control polling
 #define RELAY_CONTROL_PULL_INTERVAL_MS  1000
-#define RELAY_CONTROL_DEFAULT_AUTO_MODE true
+#define RELAY_CONTROL_DEFAULT_AUTO_MODE false
 
 // ============================================================
 // SYSTEM SETTINGS
