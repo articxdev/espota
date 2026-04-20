@@ -120,22 +120,6 @@ bool autoRelayControl = RELAY_CONTROL_DEFAULT_AUTO_MODE;
 unsigned long fanCycleStartMillis = 0;
 bool fanCycleOnPhase = true;
 
-// LED PWM channels
-const uint8_t LED_CHANNEL_HEATER = 0;
-const uint8_t LED_CHANNEL_REFRIG = 1;
-const uint8_t LED_CHANNEL_FAN    = 2;
-
-// LED fade state
-uint8_t heaterLedCurrent = 0;
-uint8_t refrigLedCurrent = 0;
-uint8_t fanLedCurrent    = 0;
-
-uint8_t heaterLedTarget = 0;
-uint8_t refrigLedTarget = 0;
-uint8_t fanLedTarget    = 0;
-
-unsigned long lastLedFadeUpdate = 0;
-
 // Dynamic Setpoints
 float heaterOnTemp   = DEFAULT_HEATER_ON_TEMP_C;
 float heaterOffTemp  = DEFAULT_HEATER_OFF_TEMP_C;
@@ -159,10 +143,7 @@ void readSensors();
 void updateAutomaticControl();
 void updateFanCycle();
 void applyRelayStates();
-void updateLedFade();
-void updateLedChannelFade(uint8_t channel, uint8_t &currentValue, uint8_t targetValue);
-void writeLedChannel(uint8_t channel, uint8_t duty);
-void setAllLedsImmediate(uint8_t duty);
+void setAllLedsImmediate(bool on);
 void writeRelay(uint8_t pin, bool on, bool activeLow);
 bool isValidDs18b20(float value);
 bool isValidAmbientTemp(float value);
@@ -228,7 +209,6 @@ void setup() {
 void loop() {
     wifiManager.process();
     handleTelnetLogger();
-    updateLedFade();
 
     // ----- WiFi watchdog: reconnect every 5 s if lost ------
     static unsigned long lastWiFiCheck = 0;
@@ -369,16 +349,12 @@ void initializePins() {
     pinMode(PIN_RELAY_REFRIG, OUTPUT); writeRelay(PIN_RELAY_REFRIG, false, RELAY_REFRIG_ACTIVE_LOW);
     pinMode(PIN_RELAY_FAN,    OUTPUT); writeRelay(PIN_RELAY_FAN,    false, RELAY_FAN_ACTIVE_LOW);
 
-    // Status LEDs (PWM fade)
-    ledcSetup(LED_CHANNEL_HEATER, LED_PWM_FREQUENCY_HZ, LED_PWM_RESOLUTION_BITS);
-    ledcSetup(LED_CHANNEL_REFRIG, LED_PWM_FREQUENCY_HZ, LED_PWM_RESOLUTION_BITS);
-    ledcSetup(LED_CHANNEL_FAN,    LED_PWM_FREQUENCY_HZ, LED_PWM_RESOLUTION_BITS);
+    // Status LEDs
+    pinMode(PIN_LED_HEATER, OUTPUT);
+    pinMode(PIN_LED_REFRIG, OUTPUT);
+    pinMode(PIN_LED_FAN,    OUTPUT);
 
-    ledcAttachPin(PIN_LED_HEATER, LED_CHANNEL_HEATER);
-    ledcAttachPin(PIN_LED_REFRIG, LED_CHANNEL_REFRIG);
-    ledcAttachPin(PIN_LED_FAN,    LED_CHANNEL_FAN);
-
-    setAllLedsImmediate(0);
+    setAllLedsImmediate(false);
 
     Serial.println("[OK] GPIO initialized:");
     Serial.println("     Relay  Heater  -> PIN " + String(PIN_RELAY_HEATER));
@@ -583,10 +559,10 @@ void applyRelayStates() {
     writeRelay(PIN_RELAY_REFRIG, REFRIG_OUTPUT_INVERTED ? !refrigOn : refrigOn, RELAY_REFRIG_ACTIVE_LOW);
     writeRelay(PIN_RELAY_FAN,    FAN_OUTPUT_INVERTED ? !fanOn : fanOn, RELAY_FAN_ACTIVE_LOW);
 
-    // Set LED targets (smooth fade handled in updateLedFade)
-    heaterLedTarget = heaterOn ? LED_BRIGHTNESS_MAX : 0;
-    refrigLedTarget = refrigOn ? LED_BRIGHTNESS_MAX : 0;
-    fanLedTarget    = fanOn    ? LED_BRIGHTNESS_MAX : 0;
+    // Set LEDs directly
+    digitalWrite(PIN_LED_HEATER, heaterOn ? HIGH : LOW);
+    digitalWrite(PIN_LED_REFRIG, refrigOn ? HIGH : LOW);
+    digitalWrite(PIN_LED_FAN,    fanOn    ? HIGH : LOW);
 
     Serial.println("[RELAY] Heater:" + String(heaterOn ? "ON ":"OFF") +
                    "  Refrig:" + String(refrigOn ? "ON ":"OFF") +
@@ -598,46 +574,10 @@ void writeRelay(uint8_t pin, bool on, bool activeLow) {
     digitalWrite(pin, level ? HIGH : LOW);
 }
 
-void writeLedChannel(uint8_t channel, uint8_t duty) {
-    ledcWrite(channel, duty);
-}
-
-void updateLedChannelFade(uint8_t channel, uint8_t &currentValue, uint8_t targetValue) {
-    if (currentValue < targetValue) {
-        int nextValue = currentValue + LED_FADE_STEP;
-        if (nextValue > targetValue) nextValue = targetValue;
-        currentValue = (uint8_t)nextValue;
-        writeLedChannel(channel, currentValue);
-    } else if (currentValue > targetValue) {
-        int nextValue = currentValue - LED_FADE_STEP;
-        if (nextValue < targetValue) nextValue = targetValue;
-        currentValue = (uint8_t)nextValue;
-        writeLedChannel(channel, currentValue);
-    }
-}
-
-void updateLedFade() {
-    const unsigned long now = millis();
-    if (now - lastLedFadeUpdate < LED_FADE_INTERVAL_MS) return;
-
-    lastLedFadeUpdate = now;
-    updateLedChannelFade(LED_CHANNEL_HEATER, heaterLedCurrent, heaterLedTarget);
-    updateLedChannelFade(LED_CHANNEL_REFRIG, refrigLedCurrent, refrigLedTarget);
-    updateLedChannelFade(LED_CHANNEL_FAN,    fanLedCurrent,    fanLedTarget);
-}
-
-void setAllLedsImmediate(uint8_t duty) {
-    heaterLedCurrent = duty;
-    refrigLedCurrent = duty;
-    fanLedCurrent    = duty;
-
-    heaterLedTarget = duty;
-    refrigLedTarget = duty;
-    fanLedTarget    = duty;
-
-    writeLedChannel(LED_CHANNEL_HEATER, duty);
-    writeLedChannel(LED_CHANNEL_REFRIG, duty);
-    writeLedChannel(LED_CHANNEL_FAN,    duty);
+void setAllLedsImmediate(bool on) {
+    digitalWrite(PIN_LED_HEATER, on ? HIGH : LOW);
+    digitalWrite(PIN_LED_REFRIG, on ? HIGH : LOW);
+    digitalWrite(PIN_LED_FAN,    on ? HIGH : LOW);
 }
 
 // ============================================================
@@ -831,10 +771,10 @@ void setupWiFiCallbacks() {
         Serial.println("[*] Provisioning portal active: " + wm->getConfigPortalSSID());
         // Fast-blink the fan LED to indicate provisioning mode
         for (int i = 0; i < 6; i++) {
-            writeLedChannel(LED_CHANNEL_FAN, LED_BRIGHTNESS_MAX); delay(150);
-            writeLedChannel(LED_CHANNEL_FAN, 0);                  delay(150);
+            digitalWrite(PIN_LED_FAN, HIGH); delay(150);
+            digitalWrite(PIN_LED_FAN, LOW);  delay(150);
         }
-        writeLedChannel(LED_CHANNEL_FAN, fanLedCurrent);
+        digitalWrite(PIN_LED_FAN, fanOn ? HIGH : LOW);
     });
 }
 
@@ -966,9 +906,9 @@ void performOTAUpdate(String firmwareUrl, String expectedSha256) {
     if (Update.end() && Update.isFinished()) {
         // Signal all LEDs before reboot
         for (int i = 0; i < 5; i++) {
-            setAllLedsImmediate(LED_BRIGHTNESS_MAX);
+            setAllLedsImmediate(true);
             delay(100);
-            setAllLedsImmediate(0);
+            setAllLedsImmediate(false);
             delay(100);
         }
         Serial.println("[OK] OTA complete - restarting...");

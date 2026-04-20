@@ -9,7 +9,7 @@
 // ============================================================
 
 // Firmware Version
-#define FIRMWARE_VERSION "1.4.0"
+#define FIRMWARE_VERSION "1.5.0"
 #define FIRMWARE_AUTHOR "ESP32 Project"
 
 // ============================================================
@@ -113,13 +113,6 @@
 // Keep relay outputs OFF during startup/provisioning to improve boot/AP stability
 #define RELAY_STARTUP_HOLDOFF_MS   30000UL // 30 seconds after boot
 #define RELAYS_OFF_DURING_PROVISIONING true
-
-// ----- LED PWM FADE SETTINGS -----
-#define LED_PWM_FREQUENCY_HZ      5000
-#define LED_PWM_RESOLUTION_BITS   8
-#define LED_BRIGHTNESS_MAX        255
-#define LED_FADE_STEP               5
-#define LED_FADE_INTERVAL_MS       20
 
 // ============================================================
 // FIREBASE REALTIME DATABASE
