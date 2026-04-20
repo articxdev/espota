@@ -571,7 +571,22 @@ void applyRelayStates() {
 
 void writeRelay(uint8_t pin, bool on, bool activeLow) {
     const bool level = activeLow ? !on : on;
-    digitalWrite(pin, level ? HIGH : LOW);
+    
+    if (activeLow) {
+        // For 5V Active-Low relays driven by 3.3V ESP32 pins:
+        // A 3.3V 'HIGH' won't fully stop the 5V optocoupler loop, causing it to stay stuck ON.
+        // Instead, we switch the pin to INPUT (High-Impedance) to safely float the wire and guarantee OFF.
+        if (level == HIGH) {
+            pinMode(pin, INPUT); // Float to turn OFF
+        } else {
+            pinMode(pin, OUTPUT);
+            digitalWrite(pin, LOW); // Sink to GND to turn ON
+        }
+    } else {
+        // Standard Active-High relays (or SSRs)
+        pinMode(pin, OUTPUT);
+        digitalWrite(pin, level ? HIGH : LOW);
+    }
 }
 
 void setAllLedsImmediate(bool on) {

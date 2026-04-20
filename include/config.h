@@ -9,7 +9,7 @@
 // ============================================================
 
 // Firmware Version
-#define FIRMWARE_VERSION "1.5.4"
+#define FIRMWARE_VERSION "1.5.5"
 #define FIRMWARE_AUTHOR "ESP32 Project"
 
 // ============================================================
@@ -75,7 +75,7 @@
 // Many relay modules are ACTIVE-LOW (IN=LOW energizes relay). Set true if needed.
 #define RELAY_HEATER_ACTIVE_LOW  false
 #define RELAY_REFRIG_ACTIVE_LOW  false
-#define RELAY_FAN_ACTIVE_LOW     false
+#define RELAY_FAN_ACTIVE_LOW     true
 
 // If load wiring behaves inverted (e.g., connected to NC contact), set true.
 // true => relay command is inverted so physical outpu
