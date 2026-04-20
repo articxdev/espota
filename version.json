@@ -1,10 +1,10 @@
 {
-  "version": "1.5.2",
-  "download_url": "https://github.com/articxdev/espota/releases/download/v1.5.2/firmware.bin",
-  "sha256": "844f23d43e22f1b1d5a72b153bac095ca70f99f58185e32540fe45ffcfccdaa5",
-  "release_notes": "Release v1.5.2 - Automatic build",
+  "version": "1.5.3",
+  "download_url": "https://github.com/articxdev/espota/releases/download/v1.5.3/firmware.bin",
+  "sha256": "86d69c73b04d5e2a5f722b8ea492a47ba9b4e7efc1bc3c541b2d2a447e30cb0b",
+  "release_notes": "Release v1.5.3 - Automatic build",
   "min_version": "0.9.0",
   "force_update": false,
-  "timestamp": "2026-04-20T09:47:57Z",
-  "release_tag": "v1.5.2"
+  "timestamp": "2026-04-20T09:59:54Z",
+  "release_tag": "v1.5.3"
 }
