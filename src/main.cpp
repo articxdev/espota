@@ -264,10 +264,10 @@ void loop() {
                         Serial.println("[SAFE] Manual override: Heater OFF (Avg >= " + String(heaterOffTemp, 1) + "°C)");
                     }
                 }
-                if (isValidDs18b20(temp2)) {
-                    if (refrigOn && temp2 <= refrigOffTemp) {
+                if (isValidDs18b20(temp1)) {
+                    if (refrigOn && temp1 <= refrigOffTemp) {
                         refrigOn = false;
-                        Serial.println("[SAFE] Manual override: Refrig OFF (temp2 <= " + String(refrigOffTemp, 1) + "°C)");
+                        Serial.println("[SAFE] Manual override: Refrig OFF (temp1 <= " + String(refrigOffTemp, 1) + "°C)");
                     }
                 }
             }
@@ -533,6 +533,7 @@ void updateAutomaticControl() {
 
     const bool ambientValid = isValidAmbientTemp(ambientTemp);
     const bool temp2Valid = isValidDs18b20(temp2);
+    const bool temp1Valid = isValidDs18b20(temp1);
 
     if (ambientValid && temp2Valid) {
         float avgTemp = (ambientTemp + temp2) / 2.0f;
@@ -549,18 +550,18 @@ void updateAutomaticControl() {
         Serial.println("[CTRL] Heater control skipped (invalid ambient temp or temp2)");
     }
 
-    if (temp2Valid) {
-        if (temp2 <= refrigOffTemp) {
+    if (temp1Valid) {
+        if (temp1 <= refrigOffTemp) {
             refrigOn = false;
-        } else if (temp2 >= refrigOnTemp) {
+        } else if (temp1 >= refrigOnTemp) {
             refrigOn = true;
         }
 
-        Serial.println("[CTRL] Refrig temp2 = " + String(temp2, 2) +
+        Serial.println("[CTRL] Refrig temp1 = " + String(temp1, 2) +
                        "°C (OFF<=" + String(refrigOffTemp, 1) +
                        ", ON>=" + String(refrigOnTemp, 1) + ")");
     } else {
-        Serial.println("[CTRL] Refrig control skipped (invalid temp2)");
+        Serial.println("[CTRL] Refrig control skipped (invalid temp1)");
     }
 }
 
