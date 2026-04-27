@@ -1,10 +1,10 @@
 {
   "version": "1.5.8",
   "download_url": "https://github.com/articxdev/espota/releases/download/v1.5.8/firmware.bin",
-  "sha256": "960e183baa5765051be1c46d5ddc0c118ff5ee470bd004863563cf6510268fdf",
+  "sha256": "cc6e69c39884ae069069e9cc2a8a39efb9a1b2e1371b54a1a595131b5e57606b",
   "release_notes": "Release v1.5.8 - Automatic build",
   "min_version": "0.9.0",
   "force_update": false,
-  "timestamp": "2026-04-27T07:44:55Z",
+  "timestamp": "2026-04-27T08:00:06Z",
   "release_tag": "v1.5.8"
 }
