@@ -255,6 +255,20 @@ void loop() {
 
             if (autoRelayControl) {
                 updateAutomaticControl();
+            } else {
+                // Manual Mode Safety Override: Force-cutoff if temps exceed set boundaries
+                if (isValidAmbientTemp(ambientTemp)) {
+                    if (heaterOn && ambientTemp >= heaterOffTemp) {
+                        heaterOn = false;
+                        Serial.println("[SAFE] Manual override: Heater OFF (ambient >= " + String(heaterOffTemp, 1) + "°C)");
+                    }
+                }
+                if (isValidDs18b20(temp2)) {
+                    if (refrigOn && temp2 <= refrigOffTemp) {
+                        refrigOn = false;
+                        Serial.println("[SAFE] Manual override: Refrig OFF (temp2 <= " + String(refrigOffTemp, 1) + "°C)");
+                    }
+                }
             }
             applyRelayStates();
         }
@@ -516,35 +530,32 @@ void updateFanCycle() {
 void updateAutomaticControl() {
     updateFanCycle();
 
-    const bool temp1Valid = isValidDs18b20(temp1);
     const bool ambientValid = isValidAmbientTemp(ambientTemp);
-    if (temp1Valid && ambientValid) {
-        const float avgTemp = (temp1 + ambientTemp) / 2.0f;
-
-        if (avgTemp > heaterOffTemp) {
+    if (ambientValid) {
+        if (ambientTemp >= heaterOffTemp) {
             heaterOn = false;
-        } else if (avgTemp < heaterOnTemp) {
+        } else if (ambientTemp <= heaterOnTemp) {
             heaterOn = true;
         }
 
-        Serial.println("[CTRL] Heater avg(temp1+i2c)/2 = " + String(avgTemp, 2) +
-                       "°C (ON<" + String(heaterOnTemp, 1) +
-                       ", OFF>" + String(heaterOffTemp, 1) + ")");
+        Serial.println("[CTRL] Heater Ambient = " + String(ambientTemp, 2) +
+                       "°C (ON<=" + String(heaterOnTemp, 1) +
+                       ", OFF>=" + String(heaterOffTemp, 1) + ")");
     } else {
-        Serial.println("[CTRL] Heater control skipped (invalid temp1 or i2c temp)");
+        Serial.println("[CTRL] Heater control skipped (invalid ambient temp)");
     }
 
     const bool temp2Valid = isValidDs18b20(temp2);
     if (temp2Valid) {
-        if (temp2 < refrigOffTemp) {
+        if (temp2 <= refrigOffTemp) {
             refrigOn = false;
-        } else if (temp2 > refrigOnTemp) {
+        } else if (temp2 >= refrigOnTemp) {
             refrigOn = true;
         }
 
-        Serial.println("[CTRL] Refrig control temp2 = " + String(temp2, 2) +
-                       "°C (OFF<" + String(refrigOffTemp, 1) +
-                       ", ON>" + String(refrigOnTemp, 1) + ")");
+        Serial.println("[CTRL] Refrig temp2 = " + String(temp2, 2) +
+                       "°C (OFF<=" + String(refrigOffTemp, 1) +
+                       ", ON>=" + String(refrigOnTemp, 1) + ")");
     } else {
         Serial.println("[CTRL] Refrig control skipped (invalid temp2)");
     }
