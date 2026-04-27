@@ -257,10 +257,11 @@ void loop() {
                 updateAutomaticControl();
             } else {
                 // Manual Mode Safety Override: Force-cutoff if temps exceed set boundaries
-                if (isValidAmbientTemp(ambientTemp)) {
-                    if (heaterOn && ambientTemp >= heaterOffTemp) {
+                if (isValidAmbientTemp(ambientTemp) && isValidDs18b20(temp2)) {
+                    float avgTemp = (ambientTemp + temp2) / 2.0f;
+                    if (heaterOn && avgTemp >= heaterOffTemp) {
                         heaterOn = false;
-                        Serial.println("[SAFE] Manual override: Heater OFF (ambient >= " + String(heaterOffTemp, 1) + "°C)");
+                        Serial.println("[SAFE] Manual override: Heater OFF (Avg >= " + String(heaterOffTemp, 1) + "°C)");
                     }
                 }
                 if (isValidDs18b20(temp2)) {
@@ -531,21 +532,23 @@ void updateAutomaticControl() {
     updateFanCycle();
 
     const bool ambientValid = isValidAmbientTemp(ambientTemp);
-    if (ambientValid) {
-        if (ambientTemp >= heaterOffTemp) {
+    const bool temp2Valid = isValidDs18b20(temp2);
+
+    if (ambientValid && temp2Valid) {
+        float avgTemp = (ambientTemp + temp2) / 2.0f;
+        if (avgTemp >= heaterOffTemp) {
             heaterOn = false;
-        } else if (ambientTemp <= heaterOnTemp) {
+        } else if (avgTemp <= heaterOnTemp) {
             heaterOn = true;
         }
 
-        Serial.println("[CTRL] Heater Ambient = " + String(ambientTemp, 2) +
+        Serial.println("[CTRL] Heater Avg(Ambient+temp2) = " + String(avgTemp, 2) +
                        "°C (ON<=" + String(heaterOnTemp, 1) +
                        ", OFF>=" + String(heaterOffTemp, 1) + ")");
     } else {
-        Serial.println("[CTRL] Heater control skipped (invalid ambient temp)");
+        Serial.println("[CTRL] Heater control skipped (invalid ambient temp or temp2)");
     }
 
-    const bool temp2Valid = isValidDs18b20(temp2);
     if (temp2Valid) {
         if (temp2 <= refrigOffTemp) {
             refrigOn = false;
